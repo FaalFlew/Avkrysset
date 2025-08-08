@@ -9,6 +9,18 @@
         >
           Planner
         </button>
+        <button
+          @click="currentView = 'templates'"
+          :class="{ active: currentView === 'templates' }"
+        >
+          Templates
+        </button>
+        <button
+          @click="currentView = 'analytics'"
+          :class="{ active: currentView === 'analytics' }"
+        >
+          Analytics
+        </button>
       </nav>
     </header>
     <main class="app-main">
@@ -22,13 +34,17 @@
 <script setup lang="ts">
 import { ref, computed, shallowRef } from "vue";
 import WeekView from "./components/WeekView.vue";
+import TaskTemplateManager from "./components/TaskTemplateManager.vue";
+import TaskAnalytics from "./components/TaskAnalytics.vue";
 
-type View = "planner";
+type View = "planner" | "templates" | "analytics";
 
 const currentView = ref<View>("planner");
 
 const components = {
   planner: WeekView,
+  templates: TaskTemplateManager,
+  analytics: TaskAnalytics,
 };
 
 const activeComponent = computed(() => components[currentView.value]);
