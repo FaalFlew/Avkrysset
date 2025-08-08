@@ -1,4 +1,3 @@
-<!-- src/App.vue -->
 <template>
   <div id="app-container">
     <header class="app-header">
@@ -29,7 +28,7 @@ type View = "planner";
 const currentView = ref<View>("planner");
 
 const components = {
-  planner: shallowRef(WeekView),
+  planner: WeekView,
 };
 
 const activeComponent = computed(() => components[currentView.value]);

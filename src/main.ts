@@ -9,3 +9,5 @@ const app = createApp(App);
 app.use(createPinia());
 
 initializeTaskStore();
+
+app.mount("#app");
