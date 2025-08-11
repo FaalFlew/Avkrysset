@@ -37,12 +37,12 @@
         </div>
 
         <div v-if="!isEditing" class="template-section">
-          <h4 class="template-header">Or use a template</h4>
+          <h4 class="template-header">Or click a template to add instantly</h4>
           <ul class="template-list">
             <li
               v-for="template in templates"
               :key="template.id"
-              @click="applyTemplate(template)"
+              @click="applyTemplateAndSave(template)"
             >
               <span
                 class="template-title"
@@ -115,11 +115,22 @@ const editableTask = ref<
 const datePart = ref(dayjs(editableTask.value.start).format("YYYY-MM-DD"));
 const timePart = ref(dayjs(editableTask.value.start).format("HH:mm"));
 
-const applyTemplate = (template: TaskTemplate) => {
-  editableTask.value.title = template.title;
-  editableTask.value.duration = template.duration;
-  editableTask.value.categoryId = template.categoryId;
-  editableTask.value.templateId = template.id;
+const applyTemplateAndSave = (template: TaskTemplate) => {
+  const startDateTime = dayjs(
+    `${datePart.value}T${timePart.value}`
+  ).toISOString();
+
+  const finalTask = {
+    title: template.title,
+    duration: template.duration,
+    categoryId: template.categoryId,
+    templateId: template.id,
+    start: startDateTime,
+  };
+
+  emit("save", finalTask);
+
+  emit("close");
 };
 
 watch(
