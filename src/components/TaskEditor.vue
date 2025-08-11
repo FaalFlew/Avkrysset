@@ -2,6 +2,7 @@
   <div class="modal-overlay" @click.self="$emit('close')">
     <div class="modal-content">
       <h3>{{ isEditing ? "Edit Task" : "Create Task" }}</h3>
+
       <form @submit.prevent="saveTask">
         <div class="form-group">
           <label for="title">Title</label>
@@ -34,6 +35,31 @@
             </option>
           </select>
         </div>
+
+        <div v-if="!isEditing" class="template-section">
+          <h4 class="template-header">Or use a template</h4>
+          <ul class="template-list">
+            <li
+              v-for="template in templates"
+              :key="template.id"
+              @click="applyTemplate(template)"
+            >
+              <span
+                class="template-title"
+                :style="{
+                  borderLeftColor: getCategory(template.categoryId)?.color,
+                }"
+              >
+                {{ template.title }}
+              </span>
+              <span class="template-details">
+                ({{ template.duration }}h,
+                {{ getCategory(template.categoryId)?.name }})
+              </span>
+            </li>
+          </ul>
+        </div>
+
         <div class="form-actions">
           <button type="button" class="btn-secondary" @click="$emit('close')">
             Cancel
@@ -56,9 +82,10 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import { useTaskStore } from "@/stores/taskStore";
+import { useTasks } from "@/composables/useTasks";
 import { storeToRefs } from "pinia";
 import dayjs from "dayjs";
-import { Task } from "@/types";
+import { Task, TaskTemplate } from "@/types";
 
 const props = defineProps<{
   taskToEdit?: Task | null;
@@ -69,6 +96,7 @@ const emit = defineEmits(["close", "save", "delete"]);
 
 const store = useTaskStore();
 const { categories } = storeToRefs(store);
+const { templates, getCategory } = useTasks();
 
 const isEditing = computed(() => !!props.taskToEdit);
 
@@ -80,12 +108,19 @@ const createDefaultTask = () => ({
   categoryId: categories.value[0]?.id || "",
 });
 
-const editableTask = ref<Omit<Task, "id"> & { id?: string }>(
-  props.taskToEdit ? { ...props.taskToEdit } : createDefaultTask()
-);
+const editableTask = ref<
+  Omit<Task, "id"> & { id?: string; templateId?: string }
+>(props.taskToEdit ? { ...props.taskToEdit } : createDefaultTask());
 
 const datePart = ref(dayjs(editableTask.value.start).format("YYYY-MM-DD"));
 const timePart = ref(dayjs(editableTask.value.start).format("HH:mm"));
+
+const applyTemplate = (template: TaskTemplate) => {
+  editableTask.value.title = template.title;
+  editableTask.value.duration = template.duration;
+  editableTask.value.categoryId = template.categoryId;
+  editableTask.value.templateId = template.id;
+};
 
 watch(
   () => props.taskToEdit,
@@ -136,7 +171,7 @@ const handleDelete = () => {
   padding: 2rem;
   border-radius: 8px;
   width: 90%;
-  max-width: 450px;
+  max-width: 500px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
 }
 h3 {
@@ -166,5 +201,51 @@ select {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.template-section {
+  margin-top: 2rem;
+  border-top: 1px solid #eee;
+  padding-top: 1rem;
+}
+.template-header {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+.template-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+.template-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid #f0f0f0;
+}
+.template-list li:last-child {
+  border-bottom: none;
+}
+.template-list li:hover {
+  background-color: #f4f5f7;
+}
+.template-title {
+  font-weight: 500;
+  border-left: 4px solid #ccc;
+  padding-left: 8px;
+}
+.template-details {
+  color: #666;
+  font-size: 0.9rem;
 }
 </style>

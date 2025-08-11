@@ -1,4 +1,3 @@
-<!-- src/components/TemplateApplier.vue -->
 <template>
   <div class="popover-overlay" @click.self="$emit('close')">
     <div class="popover-content">
@@ -49,18 +48,17 @@ const applyTemplate = (template: TaskTemplate) => {
 </script>
 
 <style scoped>
-/* Using a fixed position overlay to allow clicking anywhere to close */
 .popover-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: 1050; /* Above editor modal */
+  z-index: 1050;
 }
 
 .popover-content {
-  position: absolute; /* We will set top/left via style binding */
+  position: absolute;
   width: 280px;
   background: white;
   border-radius: 8px;

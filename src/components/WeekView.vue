@@ -9,7 +9,6 @@
     </div>
 
     <div class="calendar-grid" ref="gridEl">
-      <!-- Time column -->
       <div class="time-labels">
         <div class="header-cell"></div>
         <div v-for="hour in 24" :key="hour" class="time-label">
@@ -17,7 +16,6 @@
         </div>
       </div>
 
-      <!-- Day columns -->
       <div
         v-for="(day, dayIndex) in currentWeek"
         :key="day.toString()"
@@ -28,16 +26,14 @@
           <span class="day-number">{{ day.format("D") }}</span>
         </div>
         <div class="day-slots">
-          <!-- Clickable slots to create tasks, now passing the event object -->
           <div
             v-for="hour in 24"
             :key="hour"
             class="time-slot"
-            @click="handleSlotClick(day, hour - 1, $event)"
+            @click="handleSlotClick(day, hour - 1)"
           ></div>
         </div>
 
-        <!-- Render tasks for this day -->
         <div
           v-for="task in getTasksForDay(day)"
           :key="task.id"
@@ -53,16 +49,6 @@
   </div>
 
   <Teleport to="body">
-    <!-- The new Template Applier pop-up -->
-    <TemplateApplier
-      v-if="isTemplateApplierOpen"
-      :style="popoverStyle"
-      @close="isTemplateApplierOpen = false"
-      @create-new-task="openNewTaskEditor"
-      @create-from-template="onApplyTemplate"
-    />
-
-    <!-- The existing Task Editor modal -->
     <TaskEditor
       v-if="isEditorOpen"
       :task-to-edit="selectedTask"
@@ -79,9 +65,8 @@ import { ref, computed } from "vue";
 import { useTasks } from "@/composables/useTasks";
 import dayjs, { Dayjs } from "dayjs";
 import isBetween from "dayjs/plugin/isBetween";
-import { Task, TaskTemplate } from "@/types"; // Import TaskTemplate
+import { Task } from "@/types";
 import TaskEditor from "./TaskEditor.vue";
-import TemplateApplier from "./TemplateApplier.vue"; // Import the new component
 
 dayjs.extend(isBetween);
 
@@ -95,19 +80,11 @@ const {
   addTask,
   updateTask,
   deleteTask,
-  createTaskFromTemplate,
 } = useTasks();
 
-// --- STATE FOR TASK EDITOR ---
 const isEditorOpen = ref(false);
 const selectedTask = ref<Task | null>(null);
 const selectedDate = ref<string | undefined>(undefined);
-
-// --- NEW STATE FOR TEMPLATE APPLIER ---
-const isTemplateApplierOpen = ref(false);
-const selectedDayForTemplate = ref<Dayjs | null>(null);
-const selectedHourForTemplate = ref<number | null>(null);
-const popoverStyle = ref({});
 
 const weekRange = computed(() => {
   const start = currentWeek.value[0];
@@ -129,7 +106,7 @@ const getTaskStyle = (task: Task) => {
   const category = getCategory(task.categoryId);
 
   return {
-    top: `${startHour * 60}px`, // 1px per minute
+    top: `${startHour * 60}px`,
     height: `${task.duration * 60}px`,
     backgroundColor: category?.color || "#ccc",
   };
@@ -145,56 +122,18 @@ const formatTaskTime = (task: Task) => {
   return `${start.format("h:mm A")} - ${end.format("h:mm A")}`;
 };
 
-// --- CLICK AND EVENT HANDLERS ---
-
 const editTask = (task: Task) => {
   selectedTask.value = task;
   selectedDate.value = undefined;
   isEditorOpen.value = true;
 };
 
-// REWRITTEN: This now opens the template pop-up
-const handleSlotClick = (day: Dayjs, hour: number, event: MouseEvent) => {
-  if (isEditorOpen.value || isTemplateApplierOpen.value) return;
-
-  // Position the popover near the user's click
-  popoverStyle.value = {
-    top: `${event.clientY + 5}px`,
-    left: `${event.clientX + 5}px`,
-  };
-
-  selectedDayForTemplate.value = day;
-  selectedHourForTemplate.value = hour;
-  isTemplateApplierOpen.value = true;
-};
-
-// NEW: This handler is called when the user selects a template
-const onApplyTemplate = (template: TaskTemplate) => {
-  if (selectedDayForTemplate.value && selectedHourForTemplate.value !== null) {
-    const startTime = `${String(selectedHourForTemplate.value).padStart(
-      2,
-      "0"
-    )}:00`;
-    createTaskFromTemplate(template, selectedDayForTemplate.value, startTime);
-  }
-  isTemplateApplierOpen.value = false; // Close the popover
-};
-
-// NEW: This handler is called when user wants a blank task instead of a template
-const openNewTaskEditor = () => {
-  isTemplateApplierOpen.value = false;
+const handleSlotClick = (day: Dayjs, hour: number) => {
   selectedTask.value = null;
-
-  const initialDate = selectedDayForTemplate.value
-    ?.hour(selectedHourForTemplate.value ?? 0)
-    .minute(0)
-    .toISOString();
-
-  selectedDate.value = initialDate;
+  selectedDate.value = day.hour(hour).minute(0).toISOString();
   isEditorOpen.value = true;
 };
 
-// This function handles saving from the TaskEditor (for both new and edited tasks)
 const onSaveTask = (taskData: Task) => {
   if (taskData.id) {
     updateTask(taskData);
@@ -267,7 +206,7 @@ const onDeleteTask = (taskId: string) => {
 }
 
 .time-label {
-  height: 60px; /* Corresponds to 1 hour */
+  height: 60px;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -288,14 +227,13 @@ const onDeleteTask = (taskId: string) => {
 }
 .day-slots {
   position: absolute;
-  top: 60px; /* Below header */
+  top: 60px;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 1; /* Below tasks but above day background */
 }
 .time-slot {
-  height: 60px; /* 1 hour */
+  height: 60px;
   border-bottom: 1px solid #eee;
   cursor: pointer;
 }
