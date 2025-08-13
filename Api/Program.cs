@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using Api.Data;
 using Api.Models;
 using Api.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");

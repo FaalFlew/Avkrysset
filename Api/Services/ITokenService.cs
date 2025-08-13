@@ -1,6 +1,6 @@
 using Api.Models;
 
-namespace TimePlanner.API.Services;
+namespace Api.Services;
 
 public interface ITokenService
 {

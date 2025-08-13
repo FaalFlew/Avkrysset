@@ -11,12 +11,10 @@ public class Category
     public string Name { get; set; } = string.Empty;
 
     [Required]
-    [MaxLength(7)] // e.g., "#RRGGBB"
+    [MaxLength(7)]
     public string Color { get; set; } = string.Empty;
 
-    // Foreign Key to link this category to a user
     public Guid UserId { get; set; }
 
-    // Navigation property back to the User
     public User User { get; set; } = null!;
 }
