@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using Api.DTOs;
 using Api.Features.Categories.Commands;
 using Api.Features.Categories.Queries;
+using Api.Features.Commands.Categories;
+
 
 namespace Api.Controllers;
 
@@ -34,5 +36,25 @@ public class CategoriesController : ControllerBase
     {
         var result = await _mediator.Send(command);
         return CreatedAtAction(nameof(GetUserCategories), new { id = result.Id }, result);
+    }
+
+    [HttpPut("{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateCategory(Guid id, [FromBody] UpdateCategoryRequest request)
+    {
+        var command = new UpdateCategoryCommand(id, request.Name, request.Color);
+        await _mediator.Send(command);
+        return NoContent();
+    }
+
+    [HttpDelete("{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteCategory(Guid id)
+    {
+        await _mediator.Send(new DeleteCategoryCommand(id));
+        return NoContent();
     }
 }

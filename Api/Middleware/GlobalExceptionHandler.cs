@@ -54,7 +54,10 @@ public class GlobalExceptionHandler
                 message = ex.Message;
                 break;
 
-
+            case KeyNotFoundException ex:
+                statusCode = (int)HttpStatusCode.NotFound;
+                message = ex.Message;
+                break;
 
             default:
                 _logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
