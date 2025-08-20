@@ -39,14 +39,19 @@ public class GlobalExceptionHandler
         switch (exception)
         {
             case InvalidOperationException ex when ex.Message.Contains("already exists"):
-                statusCode = (int)HttpStatusCode.Conflict; // 409
+                statusCode = (int)HttpStatusCode.Conflict;
                 message = ex.Message;
                 break;
 
             case ValidationException ex:
-                statusCode = (int)HttpStatusCode.BadRequest; // 400
+                statusCode = (int)HttpStatusCode.BadRequest;
                 message = "One or more validation errors occurred.";
                 errors.AddRange(ex.Errors.Select(e => e.ErrorMessage));
+                break;
+
+            case ApplicationException ex when ex.Message.Contains("token"):
+                statusCode = (int)HttpStatusCode.BadRequest;
+                message = ex.Message;
                 break;
 
 

@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Api.DTOs.Auth;
 using Api.Features.Auth.Commands;
+using Api.DTOs.Auth;
 
 namespace Api.Controllers;
 
@@ -30,6 +31,16 @@ public class AuthController : ControllerBase
 
         var result = await _mediator.Send(command);
 
+        return Ok(result);
+    }
+
+    [HttpPost("refresh")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Refresh(RefreshTokenRequest request)
+    {
+        var command = new RefreshCommand(request.RefreshToken);
+        var result = await _mediator.Send(command);
         return Ok(result);
     }
 }
