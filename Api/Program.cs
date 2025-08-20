@@ -53,7 +53,8 @@ builder.Services.AddAuthentication(options =>
 
 
 builder.Services.AddScoped<ITokenService, TokenService>();
-
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowVueApp", policy =>

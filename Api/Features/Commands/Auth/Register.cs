@@ -113,12 +113,12 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, AuthRespo
                 User = user
             };
             _context.Categories.Add(newCategory);
-            categoryIdMap[catDto.Id] = newCategory.Id; // Store the mapping
+            categoryIdMap[catDto.Id] = newCategory.Id;
         }
 
         await _context.SaveChangesAsync(ct);
 
-        var templateIdMap = new Dictionary<string, Guid>(); // In case we need it
+        var templateIdMap = new Dictionary<string, Guid>();
 
         foreach (var templateDto in data.Templates)
         {
