@@ -1,7 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Api.DTOs.Auth;
-using Api.Features.Auth.Commands;
 using Api.Features.Commands.Auth;
 namespace Api.Controllers;
 
@@ -10,27 +9,39 @@ namespace Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly ISender _mediator;
+    private readonly IConfiguration _configuration;
 
-    public AuthController(ISender mediator)
+
+    public AuthController(ISender mediator, IConfiguration configuration)
     {
         _mediator = mediator;
+        _configuration = configuration;
+
     }
 
     [HttpPost("register")]
-    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register(RegisterRequest request)
     {
-        var command = new RegisterCommand(
-            request.Email,
-            request.Password,
-            request.MigrationData
-        );
+        var command = new RegisterCommand(request.Email, request.Password, request.MigrationData);
+        await _mediator.Send(command);
 
-        var result = await _mediator.Send(command);
+        return Ok(new { Message = "Registration successful. Please check your email to confirm your account." });
+    }
 
-        return Ok(result);
+    // ADD NEW ENDPOINT
+    [HttpGet("confirm-email")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ConfirmEmail([FromQuery] string userId, [FromQuery] string token)
+    {
+        var command = new ConfirmEmailCommand(userId, token);
+        await _mediator.Send(command);
+
+        var frontendLoginUrl = _configuration["FrontendBaseUrl"] + "/login?confirmed=true";
+        return Redirect(frontendLoginUrl);
     }
 
     [HttpPost("refresh")]

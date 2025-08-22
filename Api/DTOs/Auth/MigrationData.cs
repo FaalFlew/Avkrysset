@@ -1,6 +1,7 @@
 namespace Api.DTOs.Auth;
 
 
+
 public class MigrationData
 {
     public List<CategoryMigrationDto> Categories { get; set; } = new();
@@ -17,6 +18,7 @@ public class CategoryMigrationDto
 
 public class TaskTemplateMigrationDto
 {
+    public string Id { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public double Duration { get; set; }
     public string CategoryId { get; set; } = string.Empty;

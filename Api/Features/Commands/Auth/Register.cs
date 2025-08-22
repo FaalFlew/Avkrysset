@@ -6,17 +6,22 @@ using Api.Data;
 using Api.DTOs.Auth;
 using Api.Models;
 using Api.Services;
+using Api.Exceptions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+namespace Api.Features.Commands.Auth;
 
-namespace Api.Features.Auth.Commands;
+using Microsoft.AspNetCore.WebUtilities; // Add this
+using System.Text; // Add this
 
 public record RegisterCommand(
     string Email,
     string Password,
-    MigrationData? MigrationData) : IRequest<AuthResponse>;
-
+    MigrationData? MigrationData) : IRequest;
 
 public class RegisterCommandValidator : AbstractValidator<RegisterCommand>
 {
+
     public RegisterCommandValidator()
     {
         RuleFor(x => x.Email)
@@ -34,122 +39,168 @@ public class RegisterCommandValidator : AbstractValidator<RegisterCommand>
     }
 }
 
-public class RegisterCommandHandler : IRequestHandler<RegisterCommand, AuthResponse>
+public class RegisterCommandHandler : IRequestHandler<RegisterCommand>
 {
+    private readonly ILogger<RegisterCommandHandler> _logger;
     private readonly UserManager<User> _userManager;
-    private readonly ITokenService _tokenService;
     private readonly ApplicationDbContext _context;
+    private readonly IEmailService _emailService;
+    private readonly IConfiguration _configuration;
 
-    public RegisterCommandHandler(UserManager<User> userManager, ITokenService tokenService, ApplicationDbContext context)
+    public RegisterCommandHandler(
+        UserManager<User> userManager,
+        ApplicationDbContext context,
+        IEmailService emailService,
+        IConfiguration configuration,
+        ILogger<RegisterCommandHandler> logger)
     {
         _userManager = userManager;
-        _tokenService = tokenService;
         _context = context;
+        _logger = logger;
+        _emailService = emailService;
+        _configuration = configuration;
     }
 
-    public async Task<AuthResponse> Handle(RegisterCommand request, CancellationToken cancellationToken)
+    public async Task Handle(RegisterCommand request, CancellationToken cancellationToken)
     {
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
         if (existingUser != null)
         {
-            throw new InvalidOperationException("A user with this email already exists.");
+            throw new ConflictException($"A user with the email '{request.Email}' already exists.");
         }
 
         var user = new User
         {
             UserName = request.Email,
             Email = request.Email,
-            EmailConfirmed = true
         };
 
-        var result = await _userManager.CreateAsync(user, request.Password);
-        if (!result.Succeeded)
+        var identityResult = await _userManager.CreateAsync(user, request.Password);
+        if (!identityResult.Succeeded)
         {
-            var errors = string.Join("\n", result.Errors.Select(e => e.Description));
+            var errors = string.Join(", ", identityResult.Errors.Select(e => e.Description));
             throw new ValidationException(errors);
         }
+        _logger.LogInformation("User with email {Email} created successfully.", request.Email);
+
+
 
         if (request.MigrationData != null && request.MigrationData.Categories.Any())
         {
-
             await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             try
             {
-                await MigrateUserDataAsync(user, request.MigrationData, cancellationToken);
+                await MigrateUserDataAsync(user.Id, request.MigrationData, _context, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+                _logger.LogInformation("Successfully migrated local data for user {Email}.", request.Email);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                await transaction.RollbackAsync(cancellationToken);
-
+                _logger.LogWarning(ex, "Data migration failed for user {Email}. Rolling back user creation.", request.Email);
+                await _userManager.DeleteAsync(user);
+                throw new InvalidOperationException($"Data migration failed, and user registration has been rolled back. Please try again. Error: {ex.Message}", ex);
             }
         }
 
-        var (accessToken, refreshToken) = _tokenService.GenerateTokens(user);
+        await SendConfirmationEmailAsync(user);
 
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _userManager.UpdateAsync(user);
-
-        return new AuthResponse
-        {
-            AccessToken = accessToken,
-            RefreshToken = refreshToken
-        };
     }
 
-    private async Task MigrateUserDataAsync(User user, MigrationData data, CancellationToken ct)
+    private async Task SendConfirmationEmailAsync(User user)
+    {
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+
+        var frontendUrl = _configuration["FrontendBaseUrl"];
+        var confirmationLink = $"{frontendUrl}/confirm-email?userId={user.Id}&token={encodedToken}";
+
+        var emailBody = $"<h1>Welcome to Time Planner!</h1>" +
+                        $"<p>Please confirm your email address by clicking the link below:</p>" +
+                        $"<p><a href='{confirmationLink}'>Confirm my email</a></p>" +
+                        $"<p>Thank you,</p><p>The Time Planner Team</p>";
+
+        await _emailService.SendEmailAsync(user.Email!, "Confirm Your Email Address", emailBody);
+        _logger.LogInformation("Confirmation email sent to {Email}", user.Email);
+    }
+
+    private async Task MigrateUserDataAsync(
+    Guid userId,
+    MigrationData data,
+    ApplicationDbContext context,
+    CancellationToken ct)
     {
 
-        var categoryIdMap = new Dictionary<string, Guid>();
-
+        var categoryPairs = new List<(CategoryMigrationDto Dto, Category Entity)>();
         foreach (var catDto in data.Categories)
         {
-            var newCategory = new Category
-            {
-                Name = catDto.Name,
-                Color = catDto.Color,
-                User = user
-            };
-            _context.Categories.Add(newCategory);
-            categoryIdMap[catDto.Id] = newCategory.Id;
+            var newCategory = new Category { Name = catDto.Name, Color = catDto.Color, UserId = userId };
+            categoryPairs.Add((catDto, newCategory));
         }
+        context.Categories.AddRange(categoryPairs.Select(p => p.Entity));
+        await context.SaveChangesAsync(ct);
+        var categoryIdMap = categoryPairs.ToDictionary(p => p.Dto.Id, p => p.Entity.Id);
 
-        await _context.SaveChangesAsync(ct);
-
-        var templateIdMap = new Dictionary<string, Guid>();
-
+        var templatePairs = new List<(TaskTemplateMigrationDto Dto, TaskTemplate Entity)>();
         foreach (var templateDto in data.Templates)
         {
             if (categoryIdMap.TryGetValue(templateDto.CategoryId, out var newCategoryId))
             {
-                var newTemplate = new TaskTemplate
-                {
-                    Title = templateDto.Title,
-                    Duration = templateDto.Duration,
-                    CategoryId = newCategoryId,
-                    User = user
-                };
-                _context.TaskTemplates.Add(newTemplate);
+                var newTemplate = new TaskTemplate { Title = templateDto.Title, Duration = templateDto.Duration, CategoryId = newCategoryId, UserId = userId };
+                templatePairs.Add((templateDto, newTemplate));
             }
         }
+        context.TaskTemplates.AddRange(templatePairs.Select(p => p.Entity));
+        await context.SaveChangesAsync(ct);
+        var templateIdMap = templatePairs.ToDictionary(p => p.Dto.Id, p => p.Entity.Id);
+
+
+        var tasksToAdd = new List<TaskItem>();
+
+        var templateDtoMap = data.Templates.ToDictionary(t => t.Id);
 
         foreach (var taskDto in data.Tasks)
         {
-            if (categoryIdMap.TryGetValue(taskDto.CategoryId, out var newCategoryId))
+            string title;
+            double duration;
+            Guid categoryId;
+            Guid? templateId = null;
+
+            if (!string.IsNullOrEmpty(taskDto.TemplateId) &&
+                templateDtoMap.TryGetValue(taskDto.TemplateId, out var foundTemplateDto) &&
+                templateIdMap.TryGetValue(taskDto.TemplateId, out var newTemplateGuid))
             {
-                var newTask = new TaskItem
+                title = foundTemplateDto.Title;
+                duration = foundTemplateDto.Duration;
+
+                if (!categoryIdMap.TryGetValue(foundTemplateDto.CategoryId, out categoryId))
                 {
-                    Title = taskDto.Title,
-                    Start = DateTime.Parse(taskDto.Start, null, System.Globalization.DateTimeStyles.RoundtripKind),
-                    Duration = taskDto.Duration,
-                    CategoryId = newCategoryId,
-                    User = user
-                };
-                _context.Tasks.Add(newTask);
+                    continue;
+                }
+                templateId = newTemplateGuid;
             }
+            else
+            {
+                title = taskDto.Title;
+                duration = taskDto.Duration;
+
+                if (!categoryIdMap.TryGetValue(taskDto.CategoryId, out categoryId))
+                {
+                    continue;
+                }
+            }
+
+            tasksToAdd.Add(new TaskItem
+            {
+                Title = title,
+                Start = DateTime.Parse(taskDto.Start, null, System.Globalization.DateTimeStyles.RoundtripKind),
+                Duration = duration,
+                CategoryId = categoryId,
+                TemplateId = templateId,
+                UserId = userId
+            });
         }
 
-        await _context.SaveChangesAsync(ct);
+        context.Tasks.AddRange(tasksToAdd);
+        await context.SaveChangesAsync(ct);
     }
 }
