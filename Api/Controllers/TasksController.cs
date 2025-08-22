@@ -58,6 +58,18 @@ public class TasksController : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("from-template")]
+    [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateTaskFromTemplate(CreateTaskFromTemplateRequest request)
+    {
+        var command = new CreateTaskFromTemplateCommand(request.TemplateId, request.Start);
+        var result = await _mediator.Send(command);
+
+        return CreatedAtAction(nameof(GetUserTasks), new { id = result.Id }, result);
+    }
+
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> DeleteTask(Guid id)
