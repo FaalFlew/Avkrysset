@@ -43,7 +43,6 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
-        // 1. Retrieve the existing task and ensure ownership
         var task = await _context.Tasks
             .FirstOrDefaultAsync(t => t.Id == request.Id && t.UserId == userId, cancellationToken);
 
@@ -51,8 +50,6 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
         {
             throw new KeyNotFoundException($"Task with ID {request.Id} not found.");
         }
-
-        // 2. Validate Category Ownership
         var categoryExists = await _context.Categories
             .AnyAsync(c => c.Id == request.CategoryId && c.UserId == userId, cancellationToken);
         if (!categoryExists)
@@ -60,10 +57,9 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
             throw new ValidationException($"Category with ID {request.CategoryId} not found for this user.");
         }
 
-        // 3. Business Rule: Overlap Check (excluding the task being updated)
         var newEnd = request.Start.AddHours(request.Duration);
         var isOverlapping = await _context.Tasks
-            .Where(t => t.UserId == userId && t.Id != request.Id) // Exclude the current task
+            .Where(t => t.UserId == userId && t.Id != request.Id)
             .AnyAsync(t => (request.Start < t.Start.AddHours(t.Duration)) && (t.Start < newEnd), cancellationToken);
 
         if (isOverlapping)
@@ -71,7 +67,6 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
             throw new InvalidOperationException("This time slot overlaps with an existing task.");
         }
 
-        // 4. Update the entity
         task.Title = request.Title;
         task.Start = request.Start;
         task.Duration = request.Duration;

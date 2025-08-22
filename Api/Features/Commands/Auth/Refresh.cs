@@ -6,7 +6,7 @@ using Api.DTOs.Auth;
 using Api.Models;
 using Api.Services;
 
-namespace Api.Features.Auth.Commands;
+namespace Api.Features.Commands.Auth;
 
 public record RefreshCommand(string RefreshToken) : IRequest<AuthResponse>;
 

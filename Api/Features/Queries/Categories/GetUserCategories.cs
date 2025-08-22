@@ -4,7 +4,7 @@ using Api.Data;
 using Api.DTOs;
 using Api.Services;
 
-namespace Api.Features.Categories.Queries;
+namespace Api.Features.Queries.Categories;
 
 public record GetUserCategoriesQuery : IRequest<List<CategoryDto>>;
 

@@ -29,7 +29,6 @@ public class DeleteCategoryCommandHandler : IRequestHandler<DeleteCategoryComman
 
         if (category == null)
         {
-
             return;
         }
 
@@ -48,7 +47,11 @@ public class DeleteCategoryCommandHandler : IRequestHandler<DeleteCategoryComman
             .Where(tt => tt.CategoryId == request.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(tt => tt.CategoryId, otherCategory.Id), cancellationToken);
 
-        _context.Categories.Remove(category);
+        category.IsDeleted = true;
+        category.DeletedOnUtc = DateTime.UtcNow;
+        category.DeletedByUserId = userId;
+        _context.Entry(category).State = EntityState.Modified;
+
         await _context.SaveChangesAsync(cancellationToken);
     }
 

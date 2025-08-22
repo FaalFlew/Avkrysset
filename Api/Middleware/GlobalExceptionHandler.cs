@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
-using Api.Exceptions;
 using FluentValidation;
+using Api.Exceptions;
 
 namespace Api.Middleware;
 
@@ -20,6 +20,7 @@ public class GlobalExceptionHandler
     {
         try
         {
+
             await _next(context);
         }
         catch (Exception ex)
@@ -37,31 +38,42 @@ public class GlobalExceptionHandler
         var message = "An unexpected error has occurred. Please try again later.";
         var errors = new List<string>();
 
+
         switch (exception)
         {
+            case ConflictException ex:
+                statusCode = (int)HttpStatusCode.Conflict;
+                message = ex.Message;
+                _logger.LogInformation("Business rule conflict: {Message}", ex.Message);
+
+                break;
 
             case ValidationException ex:
                 statusCode = (int)HttpStatusCode.BadRequest;
                 message = "One or more validation errors occurred.";
                 errors.AddRange(ex.Errors.Select(e => e.ErrorMessage));
-                break;
+                _logger.LogInformation("Business rule conflict: {Message}", ex.Message);
 
-            case ApplicationException ex when ex.Message.Contains("token"):
-                statusCode = (int)HttpStatusCode.BadRequest;
-                message = ex.Message;
-                break;
-            case ConflictException ex:
-                statusCode = (int)HttpStatusCode.Conflict;
-                message = ex.Message;
                 break;
 
             case KeyNotFoundException ex:
                 statusCode = (int)HttpStatusCode.NotFound;
                 message = ex.Message;
+                _logger.LogInformation("Business rule conflict: {Message}", ex.Message);
+
+                break;
+
+            case ApplicationException ex when ex.Message.Contains("token"):
+                statusCode = (int)HttpStatusCode.BadRequest;
+                message = ex.Message;
+                _logger.LogInformation("Business rule conflict: {Message}", ex.Message);
                 break;
 
             default:
-                _logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
+                _logger.LogError(exception, "An unhandled exception occurred during the request.");
+
+                message = "An unexpected internal server error has occurred.";
+                statusCode = (int)HttpStatusCode.InternalServerError;
                 break;
         }
 

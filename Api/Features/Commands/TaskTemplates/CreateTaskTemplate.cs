@@ -48,7 +48,7 @@ public class CreateTaskTemplateCommandHandler : IRequestHandler<CreateTaskTempla
             Title = request.Title,
             Duration = request.Duration,
             CategoryId = request.CategoryId,
-            UserId = userId.Value
+            UserId = userId.Value,
         };
 
         _context.TaskTemplates.Add(template);

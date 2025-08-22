@@ -28,9 +28,10 @@ public class DeleteTaskCommandHandler : IRequestHandler<DeleteTaskCommand>
 
         if (task != null)
         {
-            _context.Tasks.Remove(task);
+
+            task.IsDeleted = true;
+
             await _context.SaveChangesAsync(cancellationToken);
         }
-        // If not found, do nothing.
     }
 }

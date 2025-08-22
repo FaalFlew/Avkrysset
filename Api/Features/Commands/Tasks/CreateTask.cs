@@ -67,7 +67,10 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskI
             CategoryId = request.CategoryId,
             TemplateId = request.TemplateId,
             UserId = userId.Value,
-            Category = category
+            Category = category,
+            CreatedByUserId = userId.Value,
+            CreatedOnUtc = DateTime.UtcNow,
+            IsDeleted = false
         };
 
         _context.Tasks.Add(task);

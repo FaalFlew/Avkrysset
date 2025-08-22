@@ -1,11 +1,10 @@
 using System.ComponentModel.DataAnnotations;
+using Api.Models.Common;
 
 namespace Api.Models;
 
-public class TaskTemplate
+public class TaskTemplate : AuditableEntity
 {
-    public Guid Id { get; set; }
-
     [Required]
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;

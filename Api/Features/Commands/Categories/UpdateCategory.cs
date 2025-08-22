@@ -1,11 +1,13 @@
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
-using Api.Data;
-using Api.Services;
+using TimePlanner.API.Data;
+using TimePlanner.API.Services;
 
-namespace Api.Features.Commands.Categories;
+namespace TimePlanner.API.Features.Commands.Categories;
 
+// We use IRequest (and not IRequest<T>) because a successful update
+// typically returns a 204 No Content response, which has no body.
 public record UpdateCategoryCommand(Guid Id, string Name, string Color) : IRequest;
 
 public class UpdateCategoryCommandValidator : AbstractValidator<UpdateCategoryCommand>
@@ -34,11 +36,14 @@ public class UpdateCategoryCommandHandler : IRequestHandler<UpdateCategoryComman
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
+        // Find the category by its ID, but also ensure it belongs to the current user.
+        // This is a critical security check to prevent a user from editing someone else's data.
         var category = await _context.Categories
             .FirstOrDefaultAsync(c => c.Id == request.Id && c.UserId == userId, cancellationToken);
 
         if (category == null)
         {
+            // Throw an exception that our middleware will turn into a 404 Not Found.
             throw new KeyNotFoundException($"Category with ID {request.Id} not found.");
         }
 

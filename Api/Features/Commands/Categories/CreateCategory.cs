@@ -5,7 +5,7 @@ using Api.DTOs;
 using Api.Models;
 using Api.Services;
 
-namespace Api.Features.Categories.Commands;
+namespace Api.Features.Commands.Categories;
 
 public record CreateCategoryCommand(string Name, string Color) : IRequest<CategoryDto>;
 
@@ -38,7 +38,8 @@ public class CreateCategoryCommandHandler : IRequestHandler<CreateCategoryComman
         {
             Name = request.Name,
             Color = request.Color,
-            UserId = userId.Value
+            UserId = userId.Value,
+
         };
 
         _context.Categories.Add(newCategory);

@@ -1,14 +1,14 @@
 using System.ComponentModel.DataAnnotations;
+using Api.Models.Common;
 
 namespace Api.Models;
 
-public class TaskItem
+public class TaskItem : AuditableEntity
 {
-    public Guid Id { get; set; }
-
     [Required]
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;
+
     public DateTime Start { get; set; }
 
     public double Duration { get; set; }

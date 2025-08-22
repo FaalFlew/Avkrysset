@@ -2,24 +2,83 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Api.Models;
-
+using Api.Models.Common;
+using Api.Services;
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Query;
 namespace Api.Data;
 
 public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 {
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    private readonly ICurrentUserService? _currentUserService;
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ICurrentUserService? currentUserService = null) : base(options)
     {
+        _currentUserService = currentUserService;
     }
 
     public DbSet<TaskItem> Tasks { get; set; } = null!;
     public DbSet<Category> Categories { get; set; } = null!;
     public DbSet<TaskTemplate> TaskTemplates { get; set; } = null!;
 
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var currentUserId = _currentUserService?.UserId;
+
+        foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
+        {
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    entry.Entity.CreatedByUserId = currentUserId ?? Guid.Empty;
+                    entry.Entity.CreatedOnUtc = DateTime.UtcNow;
+                    entry.Entity.IsDeleted = false;
+                    break;
+
+                case EntityState.Modified:
+                    var originalIsDeleted = entry.OriginalValues[nameof(AuditableEntity.IsDeleted)];
+                    if (originalIsDeleted != null && entry.Entity.IsDeleted && originalIsDeleted.Equals(false))
+                    {
+                        entry.Entity.DeletedByUserId = currentUserId;
+                        entry.Entity.DeletedOnUtc = DateTime.UtcNow;
+
+                        entry.Entity.UpdatedByUserId = null;
+                        entry.Entity.UpdatedOnUtc = null;
+                    }
+                    else if (!entry.Entity.IsDeleted)
+                    {
+                        entry.Entity.UpdatedByUserId = currentUserId;
+                        entry.Entity.UpdatedOnUtc = DateTime.UtcNow;
+                    }
+                    break;
+            }
+        }
+
+        return base.SaveChangesAsync(cancellationToken);
+    }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
 
+        Expression<Func<AuditableEntity, bool>> softDeleteFilter = e => !e.IsDeleted;
+
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            if (typeof(AuditableEntity).IsAssignableFrom(entityType.ClrType))
+            {
+                var parameter = Expression.Parameter(entityType.ClrType, "e");
+                var body = ReplacingExpressionVisitor.Replace(
+                    softDeleteFilter.Parameters.First(),
+                    parameter,
+                    softDeleteFilter.Body);
+                var lambda = Expression.Lambda(body, parameter);
+
+                builder.Entity(entityType.ClrType).HasQueryFilter(lambda);
+            }
+        }
         builder.Entity<User>(user =>
         {
 
@@ -39,7 +98,6 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-
         builder.Entity<Category>(category =>
         {
             category.HasKey(c => c.Id);
@@ -53,13 +111,12 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
         {
             template.HasKey(t => t.Id);
             template.Property(t => t.Title).IsRequired().HasMaxLength(200);
-
-
             template.HasOne(t => t.Category)
                 .WithMany()
                 .HasForeignKey(t => t.CategoryId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.NoAction);
         });
+
 
         builder.Entity<TaskItem>(task =>
         {
@@ -69,7 +126,7 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
             task.HasOne(t => t.Category)
                 .WithMany()
                 .HasForeignKey(t => t.CategoryId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

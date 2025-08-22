@@ -24,13 +24,11 @@ public class TokenService : ITokenService
         return (accessToken, refreshToken);
     }
 
-
     private string GenerateAccessToken(User user)
     {
         var jwtSettings = _configuration.GetSection("JwtSettings");
         var secretKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Secret"]!));
         var signingCredentials = new SigningCredentials(secretKey, SecurityAlgorithms.HmacSha256);
-
 
         var claims = new List<Claim>
         {

@@ -28,7 +28,8 @@ public class DeleteTaskTemplateCommandHandler : IRequestHandler<DeleteTaskTempla
 
         if (template != null)
         {
-            _context.TaskTemplates.Remove(template);
+            template.IsDeleted = true;
+
             await _context.SaveChangesAsync(cancellationToken);
         }
     }

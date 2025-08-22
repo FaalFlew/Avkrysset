@@ -1,10 +1,10 @@
 using System.ComponentModel.DataAnnotations;
+using Api.Models.Common;
 
 namespace Api.Models;
 
-public class Category
+public class Category : AuditableEntity
 {
-    public Guid Id { get; set; }
 
     [Required]
     [MaxLength(100)]
@@ -15,6 +15,6 @@ public class Category
     public string Color { get; set; } = string.Empty;
 
     public Guid UserId { get; set; }
-
     public User User { get; set; } = null!;
+
 }
