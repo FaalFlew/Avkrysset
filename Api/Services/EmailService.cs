@@ -12,12 +12,12 @@ public class SendGridSettings
     public string FromName { get; set; } = string.Empty;
 }
 
-public class SendGridEmailService : IEmailService
+public class EmailService : IEmailService
 {
-    private readonly ILogger<SendGridEmailService> _logger;
+    private readonly ILogger<EmailService> _logger;
     private readonly SendGridSettings _settings;
 
-    public SendGridEmailService(IOptions<SendGridSettings> settings, ILogger<SendGridEmailService> logger)
+    public EmailService(IOptions<SendGridSettings> settings, ILogger<EmailService> logger)
     {
         _settings = settings.Value;
         _logger = logger;

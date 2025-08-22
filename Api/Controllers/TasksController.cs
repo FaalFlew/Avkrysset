@@ -19,12 +19,26 @@ public class TasksController : ControllerBase
         _mediator = mediator;
     }
 
+    // Example of getting tasks for a week. 
+    // The frontend will determine the date range it needs.
     [HttpGet]
     [ProducesResponseType(typeof(List<TaskItemDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetUserTasks(DateTime startDate, DateTime endDate)
     {
         var result = await _mediator.Send(new GetTasksByDateRangeQuery(startDate, endDate));
         return Ok(result);
+    }
+
+    [HttpPost("from-template")]
+    [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateTaskFromTemplate(CreateTaskFromTemplateRequest request)
+    {
+        var command = new CreateTaskFromTemplateCommand(request.TemplateId, request.Start);
+        var result = await _mediator.Send(command);
+
+        return CreatedAtAction(nameof(GetUserTasks), new { id = result.Id }, result);
     }
 
     [HttpPost]
@@ -56,18 +70,6 @@ public class TasksController : ControllerBase
         );
         await _mediator.Send(command);
         return NoContent();
-    }
-
-    [HttpPost("from-template")]
-    [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> CreateTaskFromTemplate(CreateTaskFromTemplateRequest request)
-    {
-        var command = new CreateTaskFromTemplateCommand(request.TemplateId, request.Start);
-        var result = await _mediator.Send(command);
-
-        return CreatedAtAction(nameof(GetUserTasks), new { id = result.Id }, result);
     }
 
     [HttpDelete("{id:guid}")]

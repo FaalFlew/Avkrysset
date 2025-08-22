@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Api.DTOs.Auth;
 using Api.Features.Commands.Auth;
+
 namespace Api.Controllers;
 
 [ApiController]
@@ -11,13 +12,13 @@ public class AuthController : ControllerBase
     private readonly ISender _mediator;
     private readonly IConfiguration _configuration;
 
-
     public AuthController(ISender mediator, IConfiguration configuration)
     {
         _mediator = mediator;
         _configuration = configuration;
 
     }
+
 
     [HttpPost("register")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -43,16 +44,15 @@ public class AuthController : ControllerBase
         return Redirect(frontendLoginUrl);
     }
 
-    [HttpPost("refresh")]
-    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [HttpPost("resend-confirmation-email")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Refresh(RefreshTokenRequest request)
+    public async Task<IActionResult> ResendConfirmationEmail(ResendConfirmationRequest request)
     {
-        var command = new RefreshCommand(request.RefreshToken);
-        var result = await _mediator.Send(command);
-        return Ok(result);
+        var command = new ResendConfirmationEmailCommand(request.Email);
+        await _mediator.Send(command);
+        return Ok(new { Message = "If an account with that email exists and is unconfirmed, a new confirmation link has been sent." });
     }
-
 
     [HttpPost("forgot-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -73,5 +73,25 @@ public class AuthController : ControllerBase
         var command = new ResetPasswordCommand(request.UserId, request.Token, request.NewPassword);
         await _mediator.Send(command);
         return Ok(new { Message = "Your password has been reset successfully. You can now log in." });
+    }
+
+    [HttpPost("login")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Login(LoginRequest request)
+    {
+        var command = new LoginCommand(request.Email, request.Password);
+        var result = await _mediator.Send(command);
+        return Ok(result);
+    }
+
+    [HttpPost("refresh")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Refresh(RefreshTokenRequest request)
+    {
+        var command = new RefreshCommand(request.RefreshToken);
+        var result = await _mediator.Send(command);
+        return Ok(result);
     }
 }

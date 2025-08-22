@@ -2,10 +2,8 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Api.DTOs;
-using Api.Features.Categories.Commands;
-using Api.Features.Categories.Queries;
 using Api.Features.Commands.Categories;
-
+using Api.Features.Queries.Categories;
 
 namespace Api.Controllers;
 
