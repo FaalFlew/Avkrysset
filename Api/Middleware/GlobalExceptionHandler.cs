@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Api.Exceptions;
 using FluentValidation;
 
 namespace Api.Middleware;
@@ -38,10 +39,6 @@ public class GlobalExceptionHandler
 
         switch (exception)
         {
-            case InvalidOperationException ex when ex.Message.Contains("already exists"):
-                statusCode = (int)HttpStatusCode.Conflict;
-                message = ex.Message;
-                break;
 
             case ValidationException ex:
                 statusCode = (int)HttpStatusCode.BadRequest;
@@ -51,6 +48,10 @@ public class GlobalExceptionHandler
 
             case ApplicationException ex when ex.Message.Contains("token"):
                 statusCode = (int)HttpStatusCode.BadRequest;
+                message = ex.Message;
+                break;
+            case ConflictException ex:
+                statusCode = (int)HttpStatusCode.Conflict; // 409
                 message = ex.Message;
                 break;
 
