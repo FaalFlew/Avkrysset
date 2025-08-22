@@ -2,8 +2,6 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Api.DTOs.Auth;
 using Api.Features.Auth.Commands;
-using Api.DTOs.Auth;
-
 namespace Api.Controllers;
 
 [ApiController]

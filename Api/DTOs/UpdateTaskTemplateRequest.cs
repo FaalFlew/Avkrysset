@@ -1,4 +1,4 @@
-namespace TimePlanner.API.DTOs;
+namespace Api.DTOs;
 
 public class UpdateTaskTemplateRequest
 {

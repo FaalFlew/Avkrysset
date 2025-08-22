@@ -51,7 +51,7 @@ public class GlobalExceptionHandler
                 message = ex.Message;
                 break;
             case ConflictException ex:
-                statusCode = (int)HttpStatusCode.Conflict; // 409
+                statusCode = (int)HttpStatusCode.Conflict;
                 message = ex.Message;
                 break;
 
