@@ -31,7 +31,6 @@ public class AuthController : ControllerBase
         return Ok(new { Message = "Registration successful. Please check your email to confirm your account." });
     }
 
-    // ADD NEW ENDPOINT
     [HttpGet("confirm-email")]
     [ProducesResponseType(StatusCodes.Status302Found)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -52,5 +51,27 @@ public class AuthController : ControllerBase
         var command = new RefreshCommand(request.RefreshToken);
         var result = await _mediator.Send(command);
         return Ok(result);
+    }
+
+
+    [HttpPost("forgot-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request)
+    {
+        var command = new ForgotPasswordCommand(request.Email);
+        await _mediator.Send(command);
+
+        return Ok(new { Message = "If an account with that email exists, a password reset link has been sent." });
+    }
+
+    [HttpPost("reset-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request)
+    {
+        var command = new ResetPasswordCommand(request.UserId, request.Token, request.NewPassword);
+        await _mediator.Send(command);
+        return Ok(new { Message = "Your password has been reset successfully. You can now log in." });
     }
 }
