@@ -1,3 +1,6 @@
+
+### ❗ Some of the features have yet to be published on the public github repo and the official application website has yet to be updated with some of the descriped features.
+
 # Task & Schedule Management Platform
 
 A fullstack application for personal and organizational task management, built with **Vue.js**, **ASP.NET Core**, and **MS SQL**.  
