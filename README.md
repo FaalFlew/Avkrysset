@@ -1,5 +1,5 @@
 
-### ❗ Some of the features have yet to be published on the public github repo and the official application website has yet to be updated with some of the descriped features.
+### ❗ Some of the features have yet to be published on the public github repo and the official application website has yet to be updated with some of the described features.
 
 # Task & Schedule Management Platform
 
