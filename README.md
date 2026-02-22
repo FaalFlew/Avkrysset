@@ -1,5 +1,5 @@
 
-### ❗ Some of the features have yet to be published on the public github repo and the official application website has yet to be updated with some of the described features.
+### Live version can be found at https://avkrysset.no The application is hosted on Azure with cold starts.
 
 # Task & Schedule Management Platform
 
