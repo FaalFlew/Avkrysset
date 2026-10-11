@@ -22,6 +22,8 @@ import { fallbackExportFileName, parseContentDisposition, saveBlob } from "@/lib
 import { exportErrorMessage, formatLabel } from "@/lib/exportErrors";
 import { browserLocale, type PaperSize } from "@/lib/paper";
 import { personalReportUrl, reportFileStem, reportQuery, type ReportFormat } from "@/lib/reportQuery";
+import apiService from "@/services/apiService";
+import { useUIStore } from "@/stores/uiStore";
 
 /** When the "Waking up the server…" hint (and Cancel) appears. */
 export const SLOW_HINT_MS = 3_000;
@@ -60,17 +62,10 @@ export interface UseAnalyticsExportOptions {
 
 function defaultDeps(): AnalyticsExportDeps {
   return {
-    get: async (url, config) => {
-      const { default: apiService } = await import("@/services/apiService");
-      return apiService.get<Blob>(url, config);
-    },
+    get: (url, config) => apiService.get<Blob>(url, config),
     save: (blob, filename) => saveBlob(blob, filename),
-    announce: (message) => {
-      void import("@/stores/uiStore").then(({ useUIStore }) => useUIStore().announce(message));
-    },
-    notifyError: (message) => {
-      void import("@/stores/uiStore").then(({ useUIStore }) => useUIStore().showToast(message, "error", 6000));
-    },
+    announce: (message) => useUIStore().announce(message),
+    notifyError: (message) => useUIStore().showToast(message, "error", 6000),
     today: () => todayKey(),
     locale: () => browserLocale(),
   };
