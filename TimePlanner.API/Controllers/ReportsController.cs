@@ -31,7 +31,7 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("personal.pdf")]
-    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK, "application/pdf")]
+    [ProducesResponseType(StatusCodes.Status200OK)] // application/pdf
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
@@ -41,7 +41,7 @@ public class ReportsController : ControllerBase
         Personal(ReportFormat.Pdf, view, year, from, to, paper, locale, cancellationToken);
 
     [HttpGet("personal.csv")]
-    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK, "text/csv")]
+    [ProducesResponseType(StatusCodes.Status200OK)] // text/csv; charset=utf-8
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]

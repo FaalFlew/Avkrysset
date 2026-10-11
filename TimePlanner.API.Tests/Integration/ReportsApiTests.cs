@@ -219,6 +219,22 @@ public sealed class ReportsApiTests
     }
 
     [Fact]
+    public async Task The_endpoints_are_in_the_swagger_document()
+    {
+        var response = await _fixture.Factory.CreateClient().GetAsync("/swagger/v1/swagger.json");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var swagger = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var paths = swagger.RootElement.GetProperty("paths");
+        foreach (var path in new[] { "/api/reports/personal.pdf", "/api/reports/personal.csv" })
+        {
+            var parameters = paths.GetProperty(path).GetProperty("get").GetProperty("parameters")
+                .EnumerateArray().Select(p => p.GetProperty("name").GetString());
+            Assert.Equal(new[] { "view", "year", "from", "to", "paper", "locale" }, parameters);
+        }
+    }
+
+    [Fact]
     public async Task More_than_10_reports_a_minute_are_429_with_retry_after()
     {
         var user = await _fixture.CreateUserAsync();
