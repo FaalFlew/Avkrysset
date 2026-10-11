@@ -1,0 +1,2 @@
+# Golden CSV files are compared byte for byte (UTF-8 BOM + CRLF): never convert line endings.
+*.csv -text

@@ -1,0 +1,24 @@
+﻿# Time Planner analytics export
+# Range: Week 40 of 2026 (9/28/2026 – 10/4/2026)
+# Time zone: Europe/Oslo (UTC+02:00)
+# Generated: 2026-10-05 10:00 (Europe/Oslo)
+# Document ID: TP-20261005-ABCD1234
+Section,Key,Label,Category,Hours,Share %
+Summary,total_hours,Total hours,,1239.75,
+Summary,task_count,Tasks,,5,
+Summary,active_days,Active days,,5,
+Summary,avg_hours_per_active_day,Average hours per active day,,247.95,
+Summary,top_category,Top category,"Ops, ""night""; shifts",1234.50,99.6
+Period,2026-09-28,"Monday, September 28, 2026",,2.50,0.2
+Period,2026-09-29,"Tuesday, September 29, 2026",,1.25,0.1
+Period,2026-09-30,"Wednesday, September 30, 2026",,1.00,0.1
+Period,2026-10-01,"Thursday, October 1, 2026",,0.50,0.0
+Period,2026-10-02,"Friday, October 2, 2026",,1234.50,99.6
+Period,2026-10-03,"Saturday, October 3, 2026",,0.00,0.0
+Period,2026-10-04,"Sunday, October 4, 2026",,0.00,0.0
+Category,,"Ops, ""night""; shifts","Ops, ""night""; shifts",1234.50,99.6
+Category,,Work,Work,3.75,0.3
+Category,,Gym,Gym,1.00,0.1
+Category,,"'=HYPERLINK(""http://x"")","'=HYPERLINK(""http://x"")",0.50,0.0
+Template,,'-Standup,Work,2.50,0.2
+Template,without_template,Without template,,1237.25,99.8

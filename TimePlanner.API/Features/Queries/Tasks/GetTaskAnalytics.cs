@@ -54,29 +54,8 @@ public class GetTaskAnalyticsQueryHandler
 
         var timeZone = TimeZoneResolver.ResolveOrUtc(request.TimeZoneId, _logger);
 
-        // The user's planner: personal tasks + organization tasks assigned to them (active memberships only).
-        var rows = await _context.Tasks
-            .AsNoTracking()
-            .Where(PlannerScope.ForUser(_context, userId.Value))
-            .Where(t => t.Start >= request.StartDate && t.Start < request.EndDate)
-            .Select(t => new
-            {
-                t.Start,
-                t.Duration,
-                t.CategoryId,
-                CategoryName = t.Category.Name,
-                CategoryColor = t.Category.Color,
-                t.TemplateId,
-                t.OrganizationId,
-                OrganizationName = t.Organization != null ? t.Organization.Name : null
-            })
-            .ToListAsync(cancellationToken);
-
-        var tasks = rows
-            .Select(r => r.OrganizationId is Guid organizationId
-                ? AnalyticsTaskRow.ForOrganizationTask(r.Start, r.Duration, organizationId, r.OrganizationName ?? "Organization")
-                : new AnalyticsTaskRow(r.Start, r.Duration, r.CategoryId, r.CategoryName, r.CategoryColor, r.TemplateId))
-            .ToList();
+        var tasks = await AnalyticsTaskRows.ForPlannerAsync(
+            _context, userId.Value, request.StartDate, request.EndDate, cancellationToken);
 
         var totalHours = tasks.Sum(t => t.Duration);
 
@@ -90,33 +69,19 @@ public class GetTaskAnalyticsQueryHandler
                 TotalHours = g.Sum(x => x.Duration)
             }).ToList();
 
-        // One query for all templates used in the range.
-        var templateIds = tasks
-            .Where(t => t.TemplateId.HasValue)
-            .Select(t => t.TemplateId!.Value)
-            .Distinct()
-            .ToList();
-
-        var templates = templateIds.Count == 0
-            ? new Dictionary<Guid, (string Title, string CategoryColor)>()
-            : (await _context.TaskTemplates
-                .AsNoTracking()
-                .Where(tt => templateIds.Contains(tt.Id))
-                .Select(tt => new { tt.Id, tt.Title, CategoryColor = tt.Category.Color })
-                .ToListAsync(cancellationToken))
-                .ToDictionary(tt => tt.Id, tt => (tt.Title, tt.CategoryColor));
+        var templates = await AnalyticsTaskRows.TemplatesOfAsync(_context, tasks, cancellationToken);
 
         var timePerTemplate = tasks
             .Where(t => t.TemplateId.HasValue)
             .GroupBy(t => t.TemplateId!.Value)
             .Select(g =>
             {
-                var found = templates.TryGetValue(g.Key, out var template);
+                templates.TryGetValue(g.Key, out var template);
                 return new TimePerTemplateDto
                 {
                     TemplateId = g.Key,
-                    TemplateTitle = found ? template.Title : null,
-                    CategoryColor = found ? template.CategoryColor : null,
+                    TemplateTitle = template?.Title,
+                    CategoryColor = template?.CategoryColor,
                     TotalHours = g.Sum(x => x.Duration)
                 };
             }).ToList();
@@ -128,6 +93,67 @@ public class GetTaskAnalyticsQueryHandler
             TimePerTemplate = timePerTemplate,
             BreakdownData = TaskAnalyticsBreakdown.Build(tasks, request.ViewType, timeZone)
         };
+    }
+}
+
+/// <summary>A template referenced by analytics rows (soft-deleted templates are not found).</summary>
+public sealed record AnalyticsTemplate(string Title, string CategoryName, string CategoryColor);
+
+/// <summary>Loads the rows that personal analytics and personal reports are computed from.</summary>
+public static class AnalyticsTaskRows
+{
+    /// <summary>
+    /// The user's planner tasks (personal tasks + organization tasks assigned to them, active memberships only)
+    /// starting in the half-open UTC range [startUtc, endUtc). Organization tasks count under the organization.
+    /// </summary>
+    public static async Task<List<AnalyticsTaskRow>> ForPlannerAsync(
+        ApplicationDbContext context, Guid userId, DateTime startUtc, DateTime endUtc, CancellationToken cancellationToken)
+    {
+        var rows = await context.Tasks
+            .AsNoTracking()
+            .Where(PlannerScope.ForUser(context, userId))
+            .Where(t => t.Start >= startUtc && t.Start < endUtc)
+            .Select(t => new
+            {
+                t.Start,
+                t.Duration,
+                t.CategoryId,
+                CategoryName = t.Category.Name,
+                CategoryColor = t.Category.Color,
+                t.TemplateId,
+                t.OrganizationId,
+                OrganizationName = t.Organization != null ? t.Organization.Name : null
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r => r.OrganizationId is Guid organizationId
+                ? AnalyticsTaskRow.ForOrganizationTask(r.Start, r.Duration, organizationId, r.OrganizationName ?? "Organization")
+                : new AnalyticsTaskRow(r.Start, r.Duration, r.CategoryId, r.CategoryName, r.CategoryColor, r.TemplateId))
+            .ToList();
+    }
+
+    /// <summary>One query for all templates used by <paramref name="tasks"/>.</summary>
+    public static async Task<Dictionary<Guid, AnalyticsTemplate>> TemplatesOfAsync(
+        ApplicationDbContext context, IEnumerable<AnalyticsTaskRow> tasks, CancellationToken cancellationToken)
+    {
+        var templateIds = tasks
+            .Where(t => t.TemplateId.HasValue)
+            .Select(t => t.TemplateId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (templateIds.Count == 0)
+        {
+            return new Dictionary<Guid, AnalyticsTemplate>();
+        }
+
+        return (await context.TaskTemplates
+                .AsNoTracking()
+                .Where(tt => templateIds.Contains(tt.Id))
+                .Select(tt => new { tt.Id, tt.Title, CategoryName = tt.Category.Name, CategoryColor = tt.Category.Color })
+                .ToListAsync(cancellationToken))
+            .ToDictionary(tt => tt.Id, tt => new AnalyticsTemplate(tt.Title, tt.CategoryName, tt.CategoryColor));
     }
 }
 
@@ -176,6 +202,62 @@ public static class TaskAnalyticsBreakdown
                 DominantCategoryColor = GetDominantColor(g)
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Every bucket of <paramref name="viewType"/> that overlaps the half-open UTC range [startUtc, endUtc), in
+    /// chronological order, with the same keys and labels as <see cref="Build"/> (used to zero-fill a breakdown).
+    /// Bucket boundaries are local midnights of <paramref name="timeZone"/> (see <see cref="ZonedTime.ToUtc"/>).
+    /// </summary>
+    public static List<(string Key, string Label, DateTime StartUtc)> EnumerateBuckets(
+        DateTime startUtc, DateTime endUtc, string? viewType, TimeZoneInfo timeZone)
+    {
+        var buckets = new List<(string Key, string Label, DateTime StartUtc)>();
+        if (!IsSupportedViewType(viewType) || startUtc >= endUtc)
+        {
+            return buckets;
+        }
+
+        var view = viewType.ToLowerInvariant();
+        var firstDay = ToLocal(startUtc, timeZone).Date;
+        var cursor = view switch
+        {
+            Monthly => new DateTime(firstDay.Year, firstDay.Month, 1),
+            Weekly => firstDay.AddDays(-(((int)firstDay.DayOfWeek + 6) % 7)), // the ISO week's Monday
+            _ => firstDay
+        };
+
+        // A year of days is ~370 buckets; the cap only guards against a runaway loop.
+        for (var guard = 0; guard < 2000; guard++)
+        {
+            var next = view switch
+            {
+                Monthly => cursor.AddMonths(1),
+                Weekly => cursor.AddDays(7),
+                _ => cursor.AddDays(1)
+            };
+
+            var bucketStartUtc = ZonedTime.ToUtc(cursor, timeZone);
+            if (bucketStartUtc >= endUtc)
+            {
+                break;
+            }
+
+            if (ZonedTime.ToUtc(next, timeZone) > startUtc)
+            {
+                var (key, label) = view switch
+                {
+                    Monthly => MonthBucket(cursor),
+                    Weekly => WeekBucket(cursor),
+                    _ => DayBucket(cursor)
+                };
+                buckets.Add((key, label, bucketStartUtc));
+            }
+
+            cursor = next;
+        }
+
+        return buckets;
     }
 
     /// <summary>Wall-clock time of a UTC instant in <paramref name="timeZone"/>.</summary>

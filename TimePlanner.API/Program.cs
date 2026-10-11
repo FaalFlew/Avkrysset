@@ -15,6 +15,9 @@ using FluentValidation;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using TimePlanner.API.Behaviors;
+using TimePlanner.API.Controllers;
+using TimePlanner.API.Features.Reports;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,6 +35,9 @@ builder.Host.UseSerilog((context, configuration) =>
 try
 {
     Log.Information("Starting web application");
+
+    // PDF reports (QuestPDF): the owner confirmed Community license eligibility (plan section 8, Q13).
+    QuestPDF.Settings.License = LicenseType.Community;
 
     // --- CONFIGURATION ---
     var jwtSettings = builder.Configuration.GetSection("JwtSettings");
@@ -107,6 +113,11 @@ try
     builder.Services.AddScoped<ITokenService, TokenService>();
     builder.Services.AddScoped<IOrganizationNotificationService, SignalROrganizationNotifier>();
 
+    // ANALYTICS REPORTS (PDF/CSV): fonts are registered on first use (or by the warm-up below).
+    builder.Services.AddScoped<ReportModelBuilder>();
+    builder.Services.AddSingleton<IReportRenderer, PdfReportRenderer>();
+    builder.Services.AddReportRateLimiting(builder.Configuration);
+
     // CORS POLICY SETUP (CRUCIAL FIX)
     builder.Services.AddCors(options =>
     {
@@ -115,7 +126,9 @@ try
             policy.WithOrigins(allowedOrigins)
                   .AllowAnyHeader()
                   .AllowAnyMethod()
-                  .AllowCredentials(); // Crucial for SignalR
+                  .AllowCredentials() // Crucial for SignalR
+                  // Report downloads: the browser may only read these response headers cross-origin when exposed.
+                  .WithExposedHeaders("Content-Disposition", ReportsController.DocumentIdHeader, "Retry-After");
         });
     });
 
@@ -234,9 +247,14 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
+    // Report endpoints only (per-user token bucket + global render concurrency); needs the authenticated user.
+    app.UseRateLimiter();
+
     // 6. Map Endpoints
     app.MapControllers();
     app.MapHub<TimePlanner.API.Hubs.OrganizationHub>("/hubs/organization");
+
+    ReportWarmUp.Schedule(app);
 
     app.Run();
 }
