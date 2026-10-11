@@ -4,6 +4,7 @@
 import "@fontsource-variable/inter";
 import "./styles/tokens.css";
 import "./styles/base.css";
+import "./styles/print.css";
 import "./assets/main.css"; // Legacy compat layer — removed once every screen is migrated.
 
 import { createApp } from "vue";

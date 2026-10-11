@@ -2,7 +2,13 @@
 /**
  * UiMenu — action menu (role="menu") anchored to a trigger.
  * Props:
- *   items: MenuItem[] — { id, label, icon?, danger?, shortcut?, disabled?, onSelect }
+ *   items: MenuItem[] — { id, label, icon?, danger?, shortcut?, disabled?, description?,
+ *     checked?, keepOpen?, group?, ariaLabel?, onSelect }
+ *     - description: secondary line (e.g. why an item is disabled), exposed via aria-describedby
+ *     - checked: makes the item a menuitemradio (aria-checked) with a check mark when true
+ *     - keepOpen: selecting does not close the menu (radio choices)
+ *     - group: consecutive items with the same group are wrapped in a labelled role="group";
+ *       groups are separated by a role="separator" line
  *   placement?: 'bottom-start' | 'bottom-end' (default 'bottom-end'; flips above when needed)
  *   open?: boolean (v-model:open; optional)
  * Slots:
@@ -15,6 +21,7 @@
  * onSelect (so a dialog opened from onSelect returns focus to the trigger).
  */
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
+import { Check } from "lucide-vue-next";
 import UiKbd from "./UiKbd.vue";
 import { useFloating } from "./floating";
 import { hasOpenModal, register, unregister } from "./dialogStack";
@@ -35,6 +42,17 @@ const menuRef = ref<HTMLElement | null>(null);
 const zIndex = ref("var(--z-popover)");
 const itemEls: (HTMLButtonElement | null)[] = [];
 let pendingFocus: "first" | "last" = "first";
+
+/** Consecutive items of the same `group`, in order (indexes are positions in `items`). */
+const sections = computed(() => {
+  const list: { key: string; label: string | undefined; entries: { item: MenuItem; index: number }[] }[] = [];
+  props.items.forEach((item, index) => {
+    const last = list[list.length - 1];
+    if (last && last.label === item.group) last.entries.push({ item, index });
+    else list.push({ key: `${list.length}-${item.group ?? ""}`, label: item.group, entries: [{ item, index }] });
+  });
+  return list;
+});
 
 function setItemRef(el: unknown, index: number): void {
   itemEls[index] = el instanceof HTMLButtonElement ? el : null;
@@ -91,6 +109,10 @@ const triggerProps = computed(() => ({
 
 function select(item: MenuItem): void {
   if (item.disabled) return;
+  if (item.keepOpen) {
+    item.onSelect();
+    return;
+  }
   close(true);
   item.onSelect();
 }
@@ -190,23 +212,50 @@ defineExpose({ close, toggle });
         :style="{ ...floatingStyle, zIndex }"
         @keydown="onMenuKeydown"
       >
-        <button
-          v-for="(item, index) in items"
-          :key="item.id"
-          :ref="(el) => setItemRef(el, index)"
-          type="button"
-          role="menuitem"
-          tabindex="-1"
-          class="ui-menu__item"
-          :class="{ 'is-danger': item.danger }"
-          :aria-disabled="item.disabled || undefined"
-          @click="select(item)"
-          @pointermove="!item.disabled && focusItem(index)"
-        >
-          <component :is="item.icon" v-if="item.icon" :size="16" class="ui-menu__icon" />
-          <span class="ui-menu__label">{{ item.label }}</span>
-          <UiKbd v-if="item.shortcut?.length" :keys="item.shortcut" />
-        </button>
+        <template v-for="(section, sectionIndex) in sections" :key="section.key">
+          <div v-if="sectionIndex > 0" role="separator" class="ui-menu__separator"></div>
+          <div
+            class="ui-menu__section"
+            :role="section.label ? 'group' : undefined"
+            :aria-labelledby="section.label ? `${menuId}-group-${sectionIndex}` : undefined"
+          >
+            <div
+              v-if="section.label"
+              :id="`${menuId}-group-${sectionIndex}`"
+              class="ui-menu__group-label"
+              role="presentation"
+            >
+              {{ section.label }}
+            </div>
+            <button
+              v-for="{ item, index } in section.entries"
+              :key="item.id"
+              :ref="(el) => setItemRef(el, index)"
+              type="button"
+              :role="item.checked === undefined ? 'menuitem' : 'menuitemradio'"
+              tabindex="-1"
+              class="ui-menu__item"
+              :class="{ 'is-danger': item.danger, 'has-description': !!item.description }"
+              :aria-checked="item.checked === undefined ? undefined : item.checked"
+              :aria-disabled="item.disabled || undefined"
+              :aria-label="item.ariaLabel ?? (item.description ? item.label : undefined)"
+              :aria-describedby="item.description ? `${menuId}-desc-${index}` : undefined"
+              :data-menu-item="item.id"
+              @click="select(item)"
+              @pointermove="!item.disabled && focusItem(index)"
+            >
+              <component :is="item.icon" v-if="item.icon" :size="16" class="ui-menu__icon" />
+              <span class="ui-menu__text">
+                <span class="ui-menu__label">{{ item.label }}</span>
+                <span v-if="item.description" :id="`${menuId}-desc-${index}`" class="ui-menu__description">
+                  {{ item.description }}
+                </span>
+              </span>
+              <Check v-if="item.checked" :size="16" class="ui-menu__check" aria-hidden="true" />
+              <UiKbd v-if="item.shortcut?.length" :keys="item.shortcut" />
+            </button>
+          </div>
+        </template>
       </div>
     </Transition>
   </Teleport>
@@ -254,15 +303,56 @@ defineExpose({ close, toggle });
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+.ui-menu__item.has-description {
+  padding-top: var(--space-1-5);
+  padding-bottom: var(--space-1-5);
+}
 .ui-menu__icon {
   color: var(--text-tertiary);
 }
-.ui-menu__label {
+.ui-menu__item.has-description .ui-menu__icon {
+  align-self: flex-start;
+  margin-top: 1px;
+}
+.ui-menu__text {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.ui-menu__label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ui-menu__description {
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--text-tertiary);
+  white-space: normal;
+}
+.ui-menu__check {
+  color: var(--accent-text);
+}
+
+.ui-menu__separator {
+  height: 1px;
+  margin: var(--space-1) calc(-1 * var(--space-1));
+  background-color: var(--border-subtle);
+}
+.ui-menu__group-label {
+  padding: var(--space-1) var(--space-2) var(--space-0-5);
+  font-size: var(--fs-11);
+  line-height: var(--lh-11);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.ui-menu__section {
+  display: flex;
+  flex-direction: column;
 }
 
 .ui-menu__item.is-danger,
@@ -273,8 +363,11 @@ defineExpose({ close, toggle });
   background-color: var(--danger-subtle);
 }
 
-.ui-menu__item[aria-disabled="true"] {
+.ui-menu__item[aria-disabled="true"] .ui-menu__label,
+.ui-menu__item[aria-disabled="true"] .ui-menu__icon {
   opacity: 0.5;
+}
+.ui-menu__item[aria-disabled="true"] {
   cursor: not-allowed;
 }
 

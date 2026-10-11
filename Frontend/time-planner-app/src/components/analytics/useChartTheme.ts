@@ -1,10 +1,12 @@
 // src/components/analytics/useChartTheme.ts — Chart.js colors, fonts and motion read from the
 // design tokens (tokens.css), re-evaluated whenever the resolved theme or the reduced-motion
-// preference changes, so charts re-theme live when the user toggles light/dark.
+// preference changes, so charts re-theme live when the user toggles light/dark. In print mode
+// (usePrintMode) the light tokens are re-read and animation is off.
 
 import { computed, type ComputedRef } from "vue";
 import { useTheme } from "@/composables/useTheme";
 import { useBreakpoint } from "@/composables/useMediaQuery";
+import { printState } from "@/composables/usePrintMode";
 
 export interface ChartTheme {
   isDark: boolean;
@@ -26,12 +28,14 @@ export interface ChartTheme {
   tooltipText: string;
   tooltipTextSecondary: string;
   fontFamily: string;
-  /** 200ms, or 0 under prefers-reduced-motion. */
+  /** 200ms, or 0 under prefers-reduced-motion and while printing. */
   animationMs: number;
+  /** Print mode: light tokens, no animation (charts are redrawn for paper). */
+  printMode: boolean;
 }
 
 /** Light-theme token values, used if a token cannot be read (e.g. no DOM). */
-const FALLBACK: Omit<ChartTheme, "isDark" | "animationMs"> = {
+const FALLBACK: Omit<ChartTheme, "isDark" | "animationMs" | "printMode"> = {
   text: "#52525B",
   textMuted: "#67676F",
   grid: "#EDEDF0",
@@ -47,7 +51,7 @@ const FALLBACK: Omit<ChartTheme, "isDark" | "animationMs"> = {
   fontFamily: "Inter Variable, Inter, system-ui, sans-serif",
 };
 
-function readTokens(): Omit<ChartTheme, "isDark" | "animationMs"> {
+function readTokens(): Omit<ChartTheme, "isDark" | "animationMs" | "printMode"> {
   if (typeof document === "undefined") return FALLBACK;
   const styles = getComputedStyle(document.documentElement);
   const token = (name: string, fallback: string) =>
@@ -74,12 +78,16 @@ export function useChartTheme(): ComputedRef<ChartTheme> {
   const { prefersReducedMotion } = useBreakpoint();
 
   return computed(() => {
-    // Dependencies: the theme (tokens are switched by <html data-theme>) and reduced motion.
-    const isDark = resolvedTheme.value === "dark";
+    // Dependencies: the theme (tokens are switched by <html data-theme>), reduced motion and
+    // print mode (which forces data-theme="light" before it flips, so the tokens read here are
+    // the light ones).
+    const printMode = printState.active;
+    const isDark = !printMode && resolvedTheme.value === "dark";
     return {
       ...readTokens(),
       isDark,
-      animationMs: prefersReducedMotion.value ? 0 : 200,
+      animationMs: printMode || prefersReducedMotion.value ? 0 : 200,
+      printMode,
     };
   });
 }

@@ -983,6 +983,16 @@ export function formatTime(value: InstantInput): string {
   return instantFormatter(timeOptions()).format(toEpochMs(value));
 }
 
+/**
+ * Local date and time of an instant (medium date + the locale's clock):
+ * `"Oct 11, 2026, 14:05"` / `"Oct 11, 2026, 2:05 PM"` / `"11. okt. 2026, 14:05"`.
+ */
+export function formatDateTime(value: InstantInput): string {
+  return instantFormatter({ year: "numeric", month: "short", day: "numeric", ...timeOptions() }).format(
+    toEpochMs(value)
+  );
+}
+
 /** `"09:00 – 10:30"`: start and `start + hours`, both in local time. */
 export function formatTimeRange(start: InstantInput, hours: number): string {
   return `${formatTime(start)} – ${formatTime(endInstant(start, hours))}`;

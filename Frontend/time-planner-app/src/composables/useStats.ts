@@ -13,7 +13,7 @@ import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/authStore";
 import type { Task, TaskAnalyticsResponse } from "@/types";
 import { apiDataService } from "@/services/apiDataService";
-import { dateKeyParts, isInRange, isoWeekOf, todayKey } from "@/lib/datetime";
+import { dateKeyParts, isInRange, isoWeekOf, toDateKey, todayKey } from "@/lib/datetime";
 import { useTimeZone } from "@/composables/useClock";
 import {
   analyticsBuckets,
@@ -66,6 +66,8 @@ export interface TemplateRow {
   share: number;
   /** The template no longer exists (tasks keep their link to it). */
   deleted: boolean;
+  /** Name of the template's category, when known (guest data). */
+  categoryName: string | null;
 }
 
 export interface AnalyticsSnapshot {
@@ -82,6 +84,10 @@ export interface AnalyticsSnapshot {
   /** Hours of tasks without a template. */
   untemplatedHours: number;
   totalHours: number;
+  /** Tasks starting in the range; known for guest data only (null otherwise). */
+  taskCount: number | null;
+  /** Distinct local dates with a task starting on them; guest data only (null otherwise). */
+  activeDays: number | null;
 }
 
 export interface StatsFilters {
@@ -203,12 +209,14 @@ export function useStats() {
     const perBucket = new Map<string, Map<string, number>>(buckets.map((b) => [b.key, new Map()]));
     const perCategory = new Map<string, { hours: number; sample: Task }>();
     const perTemplate = new Map<string, { hours: number; sample: Task }>();
+    const activeDates = new Set<string>();
     let totalHours = 0;
     let templatedHours = 0;
 
     for (const task of inRange) {
       const hours = Number(task.duration) || 0;
       totalHours += hours;
+      activeDates.add(toDateKey(task.start));
 
       const bucket = perBucket.get(bucketKeyOf(sel.view, task.start));
       if (bucket) bucket.set(task.categoryId, (bucket.get(task.categoryId) ?? 0) + hours);
@@ -251,9 +259,12 @@ export function useStats() {
     const templateRows: TemplateRow[] = [...perTemplate.entries()]
       .map(([id, { hours, sample }]) => {
         const template = templates.value.find((t) => t.id === id);
+        const category = template
+          ? store.getCategoryById(template.categoryId)
+          : categoryInfo(sample.categoryId, sample);
         const color = template
-          ? (store.getCategoryById(template.categoryId)?.color ?? template.categoryColor ?? null)
-          : categoryInfo(sample.categoryId, sample).color;
+          ? (category?.color ?? template.categoryColor ?? null)
+          : (category?.color ?? null);
         return {
           id,
           name: template?.title ?? "Deleted template",
@@ -261,6 +272,7 @@ export function useStats() {
           hours,
           share: share(hours, totalHours),
           deleted: !template,
+          categoryName: category?.name ?? template?.categoryName ?? null,
         };
       })
       .sort(byHoursDesc);
@@ -273,6 +285,8 @@ export function useStats() {
       templates: templateRows,
       untemplatedHours: Math.max(0, totalHours - templatedHours),
       totalHours,
+      taskCount: inRange.length,
+      activeDays: activeDates.size,
     };
   }
 
@@ -331,6 +345,7 @@ export function useStats() {
         hours: t.totalHours,
         share: share(t.totalHours, totalHours),
         deleted: !t.templateTitle,
+        categoryName: null,
       }))
       .sort(byHoursDesc);
     const templatedHours = templateRows.reduce((sum, t) => sum + t.hours, 0);
@@ -343,6 +358,8 @@ export function useStats() {
       templates: templateRows,
       untemplatedHours: Math.max(0, totalHours - templatedHours),
       totalHours,
+      taskCount: null,
+      activeDays: null,
     };
   }
 
