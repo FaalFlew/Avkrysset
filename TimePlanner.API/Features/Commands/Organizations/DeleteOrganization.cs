@@ -26,10 +26,7 @@ public class DeleteOrganizationCommandHandler : IRequestHandler<DeleteOrganizati
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Only the owner can delete the organization.
-        if (!await _context.IsOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("Only the organization owner can delete the organization.");
-        }
+        await _context.RequireOwner(currentUserId.Value, request.OrganizationId, "Only the organization owner can delete the organization.", cancellationToken);
 
         var organization = await _context.Organizations.FindAsync(new object[] { request.OrganizationId }, cancellationToken);
         if (organization == null)

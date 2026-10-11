@@ -347,6 +347,13 @@ namespace TimePlanner.API.Migrations
                     b.Property<Guid>("OwnerId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasDefaultValue("UTC");
+
                     b.Property<Guid?>("UpdatedByUserId")
                         .HasColumnType("uniqueidentifier");
 
@@ -586,9 +593,9 @@ namespace TimePlanner.API.Migrations
 
                     b.HasIndex("CategoryId");
 
-                    b.HasIndex("OrganizationId");
+                    b.HasIndex("OrganizationId", "Start");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "Start");
 
                     b.ToTable("Tasks");
                 });
@@ -655,6 +662,10 @@ namespace TimePlanner.API.Migrations
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("Email")
                         .HasMaxLength(256)

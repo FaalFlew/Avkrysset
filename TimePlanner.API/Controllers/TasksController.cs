@@ -2,8 +2,10 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TimePlanner.API.DTOs;
+using TimePlanner.API.Exceptions;
 using TimePlanner.API.Features.Commands.Tasks;
 using TimePlanner.API.Features.Queries.Tasks;
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Controllers;
 
@@ -12,6 +14,9 @@ namespace TimePlanner.API.Controllers;
 [Authorize]
 public class TasksController : ControllerBase
 {
+    // Generous upper bound: the largest client range is a year of months or 53 ISO weeks.
+    private static readonly TimeSpan MaxRange = TimeSpan.FromDays(400);
+
     private readonly ISender _mediator;
 
     public TasksController(ISender mediator)
@@ -19,13 +24,15 @@ public class TasksController : ControllerBase
         _mediator = mediator;
     }
 
-    // Example of getting tasks for a week. 
-    // The frontend will determine the date range it needs.
+    // Tasks whose start lies in the half-open range [startDate, endDate) of UTC instants.
+    // The frontend determines the range it needs (e.g. a week or a day in the user's time zone).
     [HttpGet]
     [ProducesResponseType(typeof(List<TaskItemDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetUserTasks(DateTime startDate, DateTime endDate)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetUserTasks([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
     {
-        var result = await _mediator.Send(new GetTasksByDateRangeQuery(startDate, endDate));
+        var (start, end) = ValidateRange(startDate, endDate);
+        var result = await _mediator.Send(new GetTasksByDateRangeQuery(start, end));
         return Ok(result);
     }
 
@@ -33,7 +40,7 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(List<int>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetTaskYears()
     {
-        var result = await _mediator.Send(new GetTaskYearsQuery());
+        var result = await _mediator.Send(new GetTaskYearsQuery(ClientTimeZone.GetId(Request)));
         return Ok(result);
     }
 
@@ -41,6 +48,7 @@ public class TasksController : ControllerBase
     [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreateTaskFromTemplate(CreateTaskFromTemplateRequest request)
     {
         var command = new CreateTaskFromTemplateCommand(request.TemplateId, request.Start);
@@ -52,6 +60,7 @@ public class TasksController : ControllerBase
 
     [HttpPost]
     [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreateTask(CreateTaskItemRequest request)
     {
         var command = new CreateTaskCommand(
@@ -65,20 +74,29 @@ public class TasksController : ControllerBase
         return CreatedAtAction(nameof(GetUserTasks), new { id = result.Id }, result);
     }
 
+    // Breakdown buckets are calendar months/ISO weeks/days in the zone sent in the X-Time-Zone header (UTC if absent).
     [HttpGet("analytics")]
-    [ProducesResponseType(typeof(TaskAnalyticsDto), StatusCodes.Status200OK)] // MODIFIED type hint
+    [ProducesResponseType(typeof(TaskAnalyticsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> GetTaskAnalytics(
-        [FromQuery] DateTime startDate,
-        [FromQuery] DateTime endDate,
-        [FromQuery] string viewType) // ADDED viewType parameter
+        [FromQuery] DateTime? startDate,
+        [FromQuery] DateTime? endDate,
+        [FromQuery] string? viewType)
     {
-        // MODIFIED: Pass the new parameter to the query
-        var result = await _mediator.Send(new GetTaskAnalyticsQuery(startDate, endDate, viewType));
+        var (start, end) = ValidateRange(startDate, endDate);
+        if (!TaskAnalyticsBreakdown.IsSupportedViewType(viewType))
+        {
+            throw new BadRequestException("viewType must be 'monthly', 'weekly' or 'daily'.");
+        }
+
+        var result = await _mediator.Send(
+            new GetTaskAnalyticsQuery(start, end, viewType, ClientTimeZone.GetId(Request)));
         return Ok(result);
     }
 
     [HttpPut("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateTask(Guid id, UpdateTaskItemRequest request)
     {
         var command = new UpdateTaskCommand(
@@ -99,5 +117,26 @@ public class TasksController : ControllerBase
     {
         await _mediator.Send(new DeleteTaskCommand(id));
         return NoContent();
+    }
+
+    // Errors go through GlobalExceptionHandler so the body is { message, errors } like every other API error.
+    private static (DateTime Start, DateTime End) ValidateRange(DateTime? startDate, DateTime? endDate)
+    {
+        if (startDate is null || endDate is null)
+        {
+            throw new BadRequestException("Both startDate and endDate are required.");
+        }
+
+        if (startDate.Value >= endDate.Value)
+        {
+            throw new BadRequestException("The start date must be before the end date.");
+        }
+
+        if (endDate.Value - startDate.Value > MaxRange)
+        {
+            throw new BadRequestException($"The date range cannot exceed {MaxRange.TotalDays} days.");
+        }
+
+        return (startDate.Value, endDate.Value);
     }
 }

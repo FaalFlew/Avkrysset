@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
 using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Commands.Tasks;
+using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
@@ -22,10 +24,12 @@ public class PromoteIssueToTaskCommandValidator : AbstractValidator<PromoteIssue
 {
     public PromoteIssueToTaskCommandValidator()
     {
-        RuleFor(x => x.OrganizationId).NotEmpty();
-        RuleFor(x => x.IssueId).NotEmpty();
-        RuleFor(x => x.Start).NotEmpty();
-        RuleFor(x => x.Duration).GreaterThan(0);
+        RuleFor(x => x.OrganizationId).NotEmpty().WithMessage("Organization is required.");
+        RuleFor(x => x.IssueId).NotEmpty().WithMessage("Issue is required.");
+        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
+        RuleFor(x => x.Duration)
+            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
+            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
         RuleFor(x => x.AssigneeIds).NotEmpty().WithMessage("At least one assignee is required.");
     }
 }
@@ -52,10 +56,7 @@ public class PromoteIssueToTaskCommandHandler : IRequestHandler<PromoteIssueToTa
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Current user must be Admin or Owner.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to schedule issues in this organization.");
-        }
+        var membership = await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to schedule issues in this organization.", cancellationToken);
 
         // --- Data Validation ---
         // 1. Find the original issue.
@@ -84,11 +85,17 @@ public class PromoteIssueToTaskCommandHandler : IRequestHandler<PromoteIssueToTa
             throw new ValidationException("One or more specified assignees are not active members of this organization.");
         }
 
-        // TODO: Overlap check for assignees' schedules (optional V2 feature).
+        // Organization tasks are not checked against assignees' personal calendars (decision Q3).
 
-        var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        try
+        // The transaction runs inside the context's retrying execution strategy (EnableRetryOnFailure rejects a
+        // user-initiated transaction outside of it). Each attempt starts with an empty change tracker and
+        // re-loads the issue it changes; disposing an uncommitted transaction rolls it back.
+        var strategy = _context.Database.CreateExecutionStrategy();
+        var task = await strategy.ExecuteAsync(async () =>
         {
+            _context.ChangeTracker.Clear();
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
             // 1. Create the new TaskItem, copying details from the Issue.
             var task = new TaskItem
             {
@@ -111,40 +118,23 @@ public class PromoteIssueToTaskCommandHandler : IRequestHandler<PromoteIssueToTa
             _context.TaskAssignments.AddRange(assignments);
 
             // 3. Mark the original issue as converted for traceability.
-            issue.ConvertedToTaskItemId = task.Id;
-            _context.Issues.Update(issue);
+            var issueToConvert = await _context.Issues.SingleAsync(i => i.Id == issue.Id, cancellationToken);
+            issueToConvert.ConvertedToTaskItemId = task.Id;
 
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            return task;
+        });
 
-            // 4. Map to DTO for the response.
-            var assigneeDtos = await _context.Users
-                .Where(u => request.AssigneeIds.Contains(u.Id))
-                .Select(u => new TaskAssigneeDto { UserId = u.Id, UserEmail = u.Email! })
-                .ToListAsync(cancellationToken);
+        // 4. Map to DTO for the response (one query).
+        var taskDto = await TaskProjections.LoadAsync(_context, task.Id, cancellationToken);
 
-            var taskDto = new TaskItemDto
-            {
-                Id = task.Id,
-                Title = task.Title,
-                Start = task.Start,
-                Duration = task.Duration,
-                CategoryId = task.CategoryId,
-                CategoryName = issue.Category.Name, // We loaded the category with the issue
-                CategoryColor = issue.Category.Color,
-                OrganizationId = task.OrganizationId,
-                Assignees = assigneeDtos
-            };
-            // Send two notifications: one for the new task, one for the removed issue.
-            await _notificationService.TaskCreated(request.OrganizationId, taskDto);
-            await _notificationService.IssueDeleted(request.OrganizationId, issue.IssuePanelId, request.IssueId);
+        // Only after the commit, and only once even if the transaction was retried.
+        // Send two notifications: one for the new task, one for the removed issue.
+        await _notificationService.TaskCreated(request.OrganizationId, taskDto);
+        await _notificationService.IssueDeleted(request.OrganizationId, issue.IssuePanelId, request.IssueId);
 
-            return taskDto;
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+        return taskDto.WithCapabilities(
+            TaskCapabilities.For(task.OrganizationId, task.UserId, currentUserId.Value, membership.Role));
     }
 }

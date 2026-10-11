@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TimePlanner.API.DTOs;
 using TimePlanner.API.DTOs.Organizations;
+using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Commands.Users;
 using TimePlanner.API.Features.Queries.Users;
 
 namespace TimePlanner.API.Controllers;
@@ -17,6 +19,26 @@ public class UsersController : ControllerBase
     public UsersController(ISender mediator)
     {
         _mediator = mediator;
+    }
+
+    [HttpGet("me")]
+    [ProducesResponseType(typeof(UserProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetMyProfile()
+    {
+        var result = await _mediator.Send(new GetMyProfileQuery());
+        return Ok(result);
+    }
+
+    // displayName is trimmed; empty or whitespace clears it. Returns the updated profile.
+    [HttpPut("me")]
+    [ProducesResponseType(typeof(UserProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> UpdateMyProfile([FromBody] UpdateUserProfileRequest request)
+    {
+        var result = await _mediator.Send(new UpdateMyProfileCommand(request.DisplayName));
+        return Ok(result);
     }
 
     [HttpGet("me/organizations")]
@@ -36,7 +58,7 @@ public class UsersController : ControllerBase
     {
         if (startDate >= endDate)
         {
-            return BadRequest("The start date must be before the end date.");
+            throw new BadRequestException("The start date must be before the end date.");
         }
 
         var query = new GetMyOrganizationTasksQuery(startDate, endDate);

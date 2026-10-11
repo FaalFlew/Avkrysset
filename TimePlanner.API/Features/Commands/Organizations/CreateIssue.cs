@@ -49,10 +49,7 @@ public class CreateIssueCommandHandler : IRequestHandler<CreateIssueCommand, Iss
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Current user must be Admin or Owner.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to create issues in this organization.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to create issues in this organization.", cancellationToken);
 
         // Validate that the panel exists within the specified organization
         var panelExists = await _context.IssuePanels

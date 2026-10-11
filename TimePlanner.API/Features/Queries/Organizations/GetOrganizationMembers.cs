@@ -30,27 +30,25 @@ public class GetOrganizationMembersQueryHandler : IRequestHandler<GetOrganizatio
         }
 
         // Authorization Check: Ensure the current user is an Admin or Owner of this organization.
-        var isAuthorized = await _context.IsAdminOrOwner(userId.Value, request.OrganizationId, cancellationToken);
-        if (!isAuthorized)
-        {
-            throw new UnauthorizedAccessException("You do not have permission to view members of this organization.");
-        }
+        await _context.RequireAdminOrOwner(userId.Value, request.OrganizationId,
+            "You do not have permission to view members of this organization.", cancellationToken);
 
         // Query for the members, including their User details to get the email.
         var members = await _context.OrganizationMemberships
             .AsNoTracking()
-            .Include(m => m.User) // Eagerly load the User navigation property
             .Where(m => m.OrganizationId == request.OrganizationId)
-            .OrderBy(m => m.User.Email)
+            .OrderBy(m => m.User.DisplayName ?? m.User.Email)
             .Select(m => new OrganizationMembershipDto
             {
                 MembershipId = m.Id,
                 OrganizationId = m.OrganizationId,
                 OrganizationName = m.Organization.Name,
                 UserId = m.UserId,
-                UserEmail = m.User.Email!, // We can safely use ! because we're including User
+                UserEmail = m.User.Email!,
+                DisplayName = m.User.DisplayName ?? m.User.Email!,
                 Role = m.Role,
-                Status = m.Status
+                Status = m.Status,
+                StatusMessage = m.StatusMessage
             })
             .ToListAsync(cancellationToken);
 

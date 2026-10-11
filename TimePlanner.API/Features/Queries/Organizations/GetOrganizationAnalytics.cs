@@ -29,10 +29,7 @@ public class GetOrganizationAnalyticsQueryHandler : IRequestHandler<GetOrganizat
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be an Admin or Owner.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to view analytics for this organization.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to view analytics for this organization.", cancellationToken);
 
         // 1. Get all relevant tasks within the date range for the specified organization.
         // We select only the properties we need to minimize data transfer.
@@ -40,14 +37,19 @@ public class GetOrganizationAnalyticsQueryHandler : IRequestHandler<GetOrganizat
             .AsNoTracking()
             .Where(t => t.OrganizationId == request.OrganizationId &&
                         t.Start >= request.StartDate &&
-                        t.Start < request.EndDate.AddDays(1))
+                        t.Start < request.EndDate)
             .Select(t => new
             {
                 t.Duration,
                 t.CategoryId,
                 CategoryName = t.Category.Name,
                 CategoryColor = t.Category.Color,
-                Assignments = t.Assignments.Select(a => new { a.AssigneeId, AssigneeEmail = a.Assignee.Email })
+                Assignments = t.Assignments.Select(a => new
+                {
+                    a.AssigneeId,
+                    AssigneeEmail = a.Assignee.Email,
+                    AssigneeDisplayName = a.Assignee.DisplayName ?? a.Assignee.Email
+                })
             });
 
         var tasks = await tasksQuery.ToListAsync(cancellationToken);
@@ -68,12 +70,13 @@ public class GetOrganizationAnalyticsQueryHandler : IRequestHandler<GetOrganizat
         // 3. Aggregate Time Per Member
         // This is more complex due to the many-to-many relationship.
         var timePerMember = tasks
-            .SelectMany(t => t.Assignments.Select(a => new { MemberId = a.AssigneeId, MemberEmail = a.AssigneeEmail, t.Duration }))
-            .GroupBy(a => new { a.MemberId, a.MemberEmail })
+            .SelectMany(t => t.Assignments.Select(a => new { MemberId = a.AssigneeId, MemberEmail = a.AssigneeEmail, a.AssigneeDisplayName, t.Duration }))
+            .GroupBy(a => new { a.MemberId, a.MemberEmail, a.AssigneeDisplayName })
             .Select(g => new TimePerMemberDto
             {
                 MemberId = g.Key.MemberId,
                 MemberEmail = g.Key.MemberEmail!,
+                DisplayName = g.Key.AssigneeDisplayName!,
                 TotalHours = g.Sum(a => a.Duration)
             })
             .OrderByDescending(dto => dto.TotalHours)
