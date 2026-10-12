@@ -163,10 +163,12 @@ public sealed class PdfReportSmokeTests
             Row("2026-09-29T08:00:00Z", 2, Guid.NewGuid(), "עבודה שוטפת", "#DA6A1C"),
             Row("2026-09-30T08:00:00Z", 1, Guid.NewGuid(), "工作 仕事 업무", "#8E55CC"),
             Row("2026-10-01T08:00:00Z", 1, Guid.NewGuid(), "Running 🏃", "#B87D10"),
-            Row("2026-10-02T08:00:00Z", 1, Guid.NewGuid(), "Ελληνικά Русский", "#D3449E")
+            Row("2026-10-02T08:00:00Z", 1, Guid.NewGuid(), "Ελληνικά Русский", "#D3449E"),
+            Row("2026-10-03T08:00:00Z", 1.5, Guid.NewGuid(), "Reading", "#0E9C8C", template: Standup)
         };
+        var templates = new Dictionary<Guid, AnalyticsTemplate> { [Standup] = new("قراءة كتاب", "Reading", "#0E9C8C") };
 
-        var pdf = Render(Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "Asia/Dubai", "ar-EG", subject: "مريم"), tasks), "scripts-ar-EG.pdf");
+        var pdf = Render(Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "Asia/Dubai", "ar-EG", subject: "مريم"), tasks, templates), "scripts-ar-EG.pdf");
 
         using var document = PdfDocument.Open(pdf);
         var page = document.GetPage(1);
@@ -175,10 +177,22 @@ public sealed class PdfReportSmokeTests
         var normalized = visual.Normalize(NormalizationForm.FormKC);
         _output.WriteLine(visual);
 
+        // Copy/search: every glyph maps back to text (Noto Sans Arabic UI draws letters and their dots as one glyph).
+        Assert.DoesNotContain(page.Letters, l => l.Value.Contains((char)0));
+        var reading = Assert.Single(words, w => Reverse(Logical(w)) == "قراءة");
+        Assert.Contains(words, w => Reverse(Logical(w)) == "مريم");
+
+        // The Arabic template name sits on the same baseline as the numbers in its table row.
+        var rowNumbers = page.Letters
+            .Where(l => char.IsAsciiDigit(l.Value[0]) && Math.Abs(l.StartBaseLine.Y - reading.Letters[0].StartBaseLine.Y) < 6)
+            .ToList();
+        Assert.NotEmpty(rowNumbers);
+        Assert.All(rowNumbers, l => Assert.Equal(reading.Letters[0].StartBaseLine.Y, l.StartBaseLine.Y, 0.75));
+
         // Arabic: contextual (initial/medial/final) presentation forms prove shaping; NFKC maps them back to letters.
         // Read left to right, an RTL word is its logical text reversed (its first letter is drawn rightmost).
         var arabicWord = words.First(w => Reverse(Logical(w)) == "العمل"); // in the top-category tile and the table
-        Assert.Contains(arabicWord.Letters, l => l.Value.Any(c => c is >= 'ﭐ' and <= '﷿' or >= 'ﹰ' and <= '﻿'));
+        Assert.Contains(arabicWord.Letters, l => l.Value.Any(c => c is >= '\uFB50' and <= '\uFDFF' or >= '\uFE70' and <= '\uFEFF'));
 
         // Hebrew: no shaping, but letters and words run right to left (the first word is the one on the right).
         var avoda = Assert.Single(words, w => Reverse(Logical(w)) == "עבודה");

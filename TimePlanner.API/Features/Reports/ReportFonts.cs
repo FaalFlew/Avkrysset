@@ -13,10 +13,13 @@ namespace TimePlanner.API.Features.Reports;
 /// Latin/Greek/Cyrillic, Arabic, Hebrew, CJK (Chinese, Japanese, Korean) and monochrome emoji.
 /// Other scripts render as blanks instead of failing the export (<c>ThrowOnMissingTextGlyphs = false</c>);
 /// <see cref="MissingCodePoints"/> lets the renderer log them.
-/// Sources (unmodified, downloaded 2026-10-11): Noto Sans 2.015, Noto Sans Arabic 2.013 and Noto Sans Hebrew 3.001
-/// (unhinted TTF) from github.com/notofonts/notofonts.github.io; Noto Sans CJK SC 2.004 (OTF, covers Hangul and kana
-/// too, unlike the 8 MB "Noto Sans SC" subset) from github.com/notofonts/noto-cjk; Noto Emoji 3.002 (variable)
-/// from github.com/google/fonts (ofl/notoemoji).
+/// Sources (unmodified): Noto Sans 2.015, Noto Sans Arabic UI 2.011 and Noto Sans Hebrew 3.001 (unhinted TTF) from
+/// github.com/notofonts/notofonts.github.io; Noto Sans CJK SC 2.004 (OTF, covers Hangul and kana too, unlike the
+/// 8 MB "Noto Sans SC" subset) from github.com/notofonts/noto-cjk; Noto Emoji 3.002 (variable) from
+/// github.com/google/fonts (ofl/notoemoji). Arabic uses the "UI" variant of Noto Sans Arabic (same letterforms,
+/// OFL-NotoSansArabic.txt): its line metrics match Noto Sans, so Arabic table rows are not taller or lower than
+/// Latin ones, and it draws letters with their dots as one glyph, so copied/searched PDF text maps back to the
+/// right characters (the non-UI font draws dots as separate glyphs that PDF text extraction can't map).
 /// </summary>
 public static class ReportFonts
 {
@@ -25,7 +28,7 @@ public static class ReportFonts
     /// <summary>Font fallback order for all report text.</summary>
     public static readonly string[] Families =
     {
-        Sans, "Noto Sans Arabic", "Noto Sans Hebrew", "Noto Sans CJK SC", "Noto Emoji"
+        Sans, "Noto Sans Arabic UI", "Noto Sans Hebrew", "Noto Sans CJK SC", "Noto Emoji"
     };
 
     /// <summary>Embedded resource names (LogicalName "ReportFonts.{file}" in the csproj).</summary>
@@ -33,7 +36,7 @@ public static class ReportFonts
     {
         "NotoSans-Regular.ttf",
         "NotoSans-Bold.ttf",
-        "NotoSansArabic-Regular.ttf",
+        "NotoSansArabicUI-Regular.ttf",
         "NotoSansHebrew-Regular.ttf",
         "NotoSansCJKsc-Regular.otf",
         "NotoEmoji-VariableFont_wght.ttf"

@@ -148,7 +148,7 @@ public sealed class PdfReportRenderer : IReportRenderer
             KpiTile(row.RelativeItem(), "Total time", ReportFormatting.Hours(kpis.TotalHours, culture), null);
             KpiTile(row.RelativeItem(), "Tasks", ReportFormatting.Count(kpis.TaskCount, culture), null);
             KpiTile(row.RelativeItem(), "Active days", ReportFormatting.Count(kpis.ActiveDays, culture), null);
-            KpiTile(row.RelativeItem(), "Average per active day", ReportFormatting.Hours(kpis.AverageHoursPerActiveDay, culture), null);
+            KpiTile(row.RelativeItem(), "Avg per active day", ReportFormatting.Hours(kpis.AverageHoursPerActiveDay, culture), null);
             KpiTile(row.RelativeItem(1.4f), "Top category",
                 kpis.TopCategory?.Name ?? "–",
                 kpis.TopCategory is null
@@ -162,7 +162,8 @@ public sealed class PdfReportRenderer : IReportRenderer
     {
         container.Background(Tile).Border(0.75f).BorderColor(Rule).CornerRadius(4).Padding(8).Column(tile =>
         {
-            tile.Item().Text(label).FontSize(7.5f).FontColor(Muted);
+            // One label line in every tile, so all values sit on the same line.
+            tile.Item().Text(label).FontSize(7.5f).FontColor(Muted).ClampLines(1);
             tile.Item().PaddingTop(3).Text(value).FontSize(smallValue ? 11 : 15).Bold().ClampLines(2);
             if (detail is not null)
             {
@@ -361,8 +362,9 @@ public sealed class PdfReportRenderer : IReportRenderer
         container.BorderBottom(0.75f).BorderColor(Rule).PaddingVertical(4)
             .DefaultTextStyle(style => style.FontSize(7.5f).FontColor(Muted));
 
+    // AlignMiddle: a cell whose text uses a taller fallback font (e.g. CJK) stays centred with its neighbours.
     private static IContainer BodyCell(IContainer container) =>
-        container.BorderBottom(0.5f).BorderColor(Rule).PaddingVertical(4);
+        container.BorderBottom(0.5f).BorderColor(Rule).PaddingVertical(4).AlignMiddle();
 
     private static string SubjectLine(ReportModel model) => model.Kind switch
     {
