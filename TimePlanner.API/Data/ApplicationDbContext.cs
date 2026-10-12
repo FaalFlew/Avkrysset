@@ -37,11 +37,18 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
     public DbSet<IssuePanel> IssuePanels { get; set; } = null!;
     public DbSet<Issue> Issues { get; set; } = null!;
     public DbSet<OrganizationInvitation> OrganizationInvitations { get; set; } = null!;
+    public DbSet<ReportExport> ReportExports { get; set; } = null!;
 
 
     // 3. Add the SaveChangesAsync override back. This is the centralized audit logic.
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        // Report exports are an audit trail: insert only.
+        if (ChangeTracker.Entries<ReportExport>().Any(e => e.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Report exports are append-only.");
+        }
+
         var currentUserId = _currentUserService?.UserId;
 
         foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
@@ -326,6 +333,34 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
             // A user can only be in a specific organization once.
             // This creates a composite unique index.
             membership.HasIndex(m => new { m.OrganizationId, m.UserId }).IsUnique();
+        });
+
+        // --- Configure the ReportExport Entity (append-only audit of PDF/CSV exports) ---
+        builder.Entity<ReportExport>(export =>
+        {
+            export.HasKey(e => e.Id);
+            export.Property(e => e.DocumentId).IsRequired().HasMaxLength(32);
+            export.HasIndex(e => e.DocumentId).IsUnique();
+            export.Property(e => e.Kind).IsRequired().HasMaxLength(16);
+            export.Property(e => e.Format).IsRequired().HasMaxLength(8);
+            export.Property(e => e.ViewType).IsRequired().HasMaxLength(16);
+            export.Property(e => e.TimeZoneId).IsRequired().HasMaxLength(64);
+            export.Property(e => e.Culture).IsRequired().HasMaxLength(64);
+            export.Property(e => e.Paper).HasMaxLength(8);
+            export.Property(e => e.ContentSha256).IsRequired().HasColumnType("binary(32)");
+
+            // The organization's activity feed lists its exports newest first.
+            export.HasIndex(e => new { e.OrganizationId, e.CreatedOnUtc });
+
+            export.HasOne(e => e.RequestedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedByUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            export.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

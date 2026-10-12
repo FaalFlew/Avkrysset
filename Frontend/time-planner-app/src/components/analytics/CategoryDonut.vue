@@ -340,4 +340,14 @@ const tableColumns = [
 .legend__toggle:hover {
   background-color: var(--accent-subtle);
 }
+
+/* Paper: the full category list is in the expanded data table below. */
+@media print {
+  .legend__toggle {
+    display: none;
+  }
+  .donut-layout {
+    break-inside: avoid;
+  }
+}
 </style>

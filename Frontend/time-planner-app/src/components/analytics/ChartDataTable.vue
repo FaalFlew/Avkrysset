@@ -9,6 +9,8 @@
  *   footer?: Record<columnKey, string> — optional totals row
  *   summaryLabel?: string (default "View data")
  *   loading?: boolean — render a same-height placeholder (no layout jump when data arrives)
+ * Print: the table is expanded (usePrintMode opens every <details data-print-expand>), shown in
+ * full without the scroll box, and its header repeats on every page.
  */
 import { ChevronRight } from "lucide-vue-next";
 import { UiSkeleton } from "@/components/ui";
@@ -31,7 +33,7 @@ withDefaults(
   <div v-if="loading" class="data-table data-table--skeleton" aria-hidden="true">
     <UiSkeleton :width="76" :height="10" />
   </div>
-  <details v-else class="data-table">
+  <details v-else class="data-table" data-print-expand>
     <summary class="data-table__summary">
       <ChevronRight :size="14" class="data-table__chevron" aria-hidden="true" />
       {{ summaryLabel }}
@@ -181,5 +183,43 @@ tfoot td {
   border-bottom: none;
   font-weight: var(--fw-semibold);
   color: var(--text-primary);
+}
+
+@media print {
+  .data-table {
+    border-top: none;
+    padding-top: 0;
+  }
+  .data-table__summary {
+    display: none;
+  }
+  .data-table__scroll {
+    max-height: none;
+    overflow: visible;
+  }
+  thead th {
+    position: static;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  th,
+  td {
+    padding-top: var(--space-1);
+    padding-bottom: var(--space-1);
+  }
+}
+</style>
+
+<style>
+/* Browsers with ::details-content (Chrome 131+) also show a closed table when printing starts
+   without `beforeprint` (unscoped: the pseudo-element cannot carry the scope attribute). */
+@media print {
+  details.data-table::details-content {
+    content-visibility: visible;
+  }
 }
 </style>
