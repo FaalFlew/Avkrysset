@@ -32,10 +32,7 @@ public class UpdateIssuePanelCommandHandler : IRequestHandler<UpdateIssuePanelCo
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Must be Admin or Owner
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to edit issue panels.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to edit issue panels.", cancellationToken);
 
         var panel = await _context.IssuePanels
             .FirstOrDefaultAsync(p => p.Id == request.PanelId && p.OrganizationId == request.OrganizationId, cancellationToken);

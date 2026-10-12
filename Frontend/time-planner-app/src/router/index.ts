@@ -1,66 +1,85 @@
-// NEW FILE: src/router/index.ts
+// src/router/index.ts
 
-import { createRouter, createWebHistory } from "vue-router";
+import { nextTick } from "vue";
+import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 import { useAuthStore } from "@/stores/authStore";
 
-// We will create these view components in the next actions.
 import PlannerView from "@/views/PlannerView.vue";
+import TodayView from "@/views/TodayView.vue";
 import LoginView from "@/views/LoginView.vue";
 import RegisterView from "@/views/RegisterView.vue";
-import AuthCallbackView from "@/views/AuthCallbackView.vue"; // ADDED: Import the new view
-import TodayView from "@/views/TodayView.vue"; // ADDED
-import ForgotPasswordView from "@/views/ForgotPasswordView.vue"; // ADDED
-import ResetPasswordView from "@/views/ResetPasswordView.vue"; // ADDED
-import CheckEmailView from "@/views/CheckEmailView.vue"; // ADDED
+import AuthCallbackView from "@/views/AuthCallbackView.vue";
+import ForgotPasswordView from "@/views/ForgotPasswordView.vue";
+import ResetPasswordView from "@/views/ResetPasswordView.vue";
+import CheckEmailView from "@/views/CheckEmailView.vue";
 
-const routes = [
+declare module "vue-router" {
+  interface RouteMeta {
+    /** Page name for document.title ("Planner · Time Planner"). */
+    title?: string;
+    /** 'auth' renders the route without the app shell (the view brings its own AuthLayout). */
+    layout?: "app" | "auth";
+    requiresAuth?: boolean;
+    /** Only for signed-out users (signed-in users are sent to the planner). */
+    guestOnly?: boolean;
+  }
+}
+
+const routes: RouteRecordRaw[] = [
+  { path: "/", name: "Planner", component: PlannerView, meta: { title: "Planner" } },
+  { path: "/today", name: "Today", component: TodayView, meta: { title: "Today" } },
   {
-    path: "/",
-    name: "Planner",
-    component: PlannerView,
+    path: "/analytics",
+    name: "Analytics",
+    // Lazy: keeps Chart.js out of the main bundle.
+    component: () => import("@/components/TaskAnalytics.vue"),
+    meta: { title: "Analytics" },
   },
-
-  { path: "/today", name: "Today", component: TodayView },
+  {
+    path: "/templates",
+    name: "Templates",
+    component: () => import("@/components/TaskTemplateManager.vue"),
+    meta: { title: "Templates" },
+  },
 
   {
     path: "/login",
     name: "Login",
     component: LoginView,
-    meta: { guestOnly: true }, // This route is only for guests
+    meta: { guestOnly: true, layout: "auth", title: "Log in" },
   },
   {
     path: "/register",
     name: "Register",
     component: RegisterView,
-    meta: { guestOnly: true }, // This route is also only for guests
+    meta: { guestOnly: true, layout: "auth", title: "Create account" },
   },
-
   {
     path: "/confirm-email",
     name: "ConfirmEmail",
     component: AuthCallbackView,
-    meta: { guestOnly: true }, // This page should only be accessible to non-logged-in users
+    meta: { guestOnly: true, layout: "auth", title: "Confirm email" },
   },
   {
     path: "/forgot-password",
     name: "ForgotPassword",
     component: ForgotPasswordView,
-    meta: { guestOnly: true },
+    meta: { guestOnly: true, layout: "auth", title: "Reset password" },
   },
   {
     path: "/reset-password",
     name: "ResetPassword",
     component: ResetPasswordView,
-    meta: { guestOnly: true },
+    meta: { guestOnly: true, layout: "auth", title: "Choose a new password" },
   },
   {
     path: "/check-email",
     name: "CheckEmail",
     component: CheckEmailView,
-    meta: { guestOnly: true },
+    meta: { guestOnly: true, layout: "auth", title: "Check your email" },
   },
 
-  // We will add routes for Analytics, etc., later.
+  { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
 
 const router = createRouter({
@@ -68,22 +87,31 @@ const router = createRouter({
   routes,
 });
 
-// --- Navigation Guard ---
-// This function runs before every route change.
-router.beforeEach((to, from, next) => {
+// --- Navigation guard ---
+router.beforeEach((to) => {
   const authStore = useAuthStore();
-  const isAuthenticated = authStore.isAuthenticated;
+  if (to.meta.requiresAuth && !authStore.isAuthenticated) return "/login";
+  if (to.meta.guestOnly && authStore.isAuthenticated) return "/";
+  return true;
+});
 
-  if (to.meta.requiresAuth && !isAuthenticated) {
-    // If the route requires auth and the user is not logged in, redirect to login.
-    next("/login");
-  } else if (to.meta.guestOnly && isAuthenticated) {
-    // If the route is for guests only and the user is logged in, redirect to the planner.
-    next("/");
-  } else {
-    // Otherwise, allow the navigation.
-    next();
+// --- Title + focus management ---
+let isFirstNavigation = true;
+router.afterEach((to, _from, failure) => {
+  if (failure) return;
+  document.title = to.meta.title ? `${to.meta.title} · Time Planner` : "Time Planner";
+
+  if (isFirstNavigation) {
+    isFirstNavigation = false;
+    return;
   }
+  // Move focus to the new page's heading so screen-reader and keyboard users start there.
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>("[data-page-heading]");
+      heading?.focus({ preventScroll: true });
+    });
+  });
 });
 
 export default router;

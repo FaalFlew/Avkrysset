@@ -3,6 +3,8 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
+using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models;
 using TimePlanner.API.Services;
 
@@ -21,8 +23,8 @@ public class CreateTaskFromTemplateCommandValidator : AbstractValidator<CreateTa
 {
     public CreateTaskFromTemplateCommandValidator()
     {
-        RuleFor(x => x.TemplateId).NotEmpty();
-        RuleFor(x => x.Start).NotEmpty();
+        RuleFor(x => x.TemplateId).NotEmpty().WithMessage("Template is required.");
+        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
     }
 }
 
@@ -63,15 +65,11 @@ public class CreateTaskFromTemplateCommandHandler : IRequestHandler<CreateTaskFr
         }
 
         // 2. Business Rule: Overlap Check for the new task.
-        var newEnd = request.Start.AddHours(template.Duration);
-        var isOverlapping = await _context.Tasks
-            .Where(t => t.UserId == userId)
-            .AnyAsync(t => (request.Start < t.Start.AddHours(t.Duration)) && (t.Start < newEnd), cancellationToken);
-
-        if (isOverlapping)
-        {
-            throw new InvalidOperationException("The new task created from this template overlaps with an existing task.");
-        }
+        // Checked against everything in the user's planner (personal tasks and assigned organization tasks).
+        var newEnd = TaskOverlap.EndOf(request.Start, template.Duration);
+        await TaskOverlap.ThrowIfOverlapsAsync(
+            _context.Tasks.Where(PlannerScope.ForUser(_context, userId.Value)),
+            request.Start, newEnd, "The new task created from this template overlaps with an existing task.", cancellationToken);
 
         // 3. Create the new TaskItem by inheriting properties from the template.
         var newTask = new TaskItem
@@ -91,16 +89,8 @@ public class CreateTaskFromTemplateCommandHandler : IRequestHandler<CreateTaskFr
         _logger.LogInformation("Task created from template {TemplateId} for user {UserId}", template.Id, userId);
 
         // 5. Map to DTO and return.
-        return new TaskItemDto
-        {
-            Id = newTask.Id,
-            Title = newTask.Title,
-            Start = newTask.Start,
-            Duration = newTask.Duration,
-            CategoryId = newTask.CategoryId,
-            CategoryName = template.Category.Name, // We can use the category loaded with the template
-            CategoryColor = template.Category.Color,
-            TemplateId = newTask.TemplateId
-        };
+        var dto = await TaskProjections.LoadAsync(_context, newTask.Id, cancellationToken);
+        dto.Capabilities = TaskCapabilities.For(null, userId.Value, userId.Value, null);
+        return dto;
     }
 }

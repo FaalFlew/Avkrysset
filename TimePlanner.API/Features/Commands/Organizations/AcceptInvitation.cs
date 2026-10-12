@@ -50,11 +50,19 @@ public class AcceptInvitationCommandHandler : IRequestHandler<AcceptInvitationCo
             throw new BadRequestException("This invitation has expired.");
         }
 
-        var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        try
+        // The transaction runs inside the context's retrying execution strategy (EnableRetryOnFailure rejects a
+        // user-initiated transaction outside of it). Each attempt starts with an empty change tracker and
+        // re-loads what it changes; disposing an uncommitted transaction rolls it back.
+        var strategy = _context.Database.CreateExecutionStrategy();
+        var membership = await strategy.ExecuteAsync(async () =>
         {
+            _context.ChangeTracker.Clear();
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
             // Mark invitation as accepted
-            invitation.Status = InvitationStatus.Accepted;
+            var pendingInvitation = await _context.OrganizationInvitations
+                .SingleAsync(i => i.Id == invitation.Id, cancellationToken);
+            pendingInvitation.Status = InvitationStatus.Accepted;
 
             // Create or reactivate membership
             var membership = await _context.OrganizationMemberships
@@ -79,26 +87,25 @@ public class AcceptInvitationCommandHandler : IRequestHandler<AcceptInvitationCo
 
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            return membership;
+        });
 
-            var membershipDto = new OrganizationMembershipDto
-            {
-                MembershipId = membership.Id,
-                OrganizationId = membership.OrganizationId,
-                OrganizationName = invitation.Organization.Name,
-                UserId = membership.UserId,
-                UserEmail = currentUser.Email!,
-                Role = membership.Role,
-                Status = membership.Status
-            };
-
-            await _notificationService.MemberJoined(invitation.OrganizationId, membershipDto);
-
-            return membershipDto;
-        }
-        catch (Exception)
+        var membershipDto = new OrganizationMembershipDto
         {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+            MembershipId = membership.Id,
+            OrganizationId = membership.OrganizationId,
+            OrganizationName = invitation.Organization.Name,
+            UserId = membership.UserId,
+            UserEmail = currentUser.Email!,
+            DisplayName = currentUser.DisplayName ?? currentUser.Email!,
+            Role = membership.Role,
+            Status = membership.Status,
+            StatusMessage = membership.StatusMessage
+        };
+
+        // Only after the commit, and only once even if the transaction was retried.
+        await _notificationService.MemberJoined(invitation.OrganizationId, membershipDto);
+
+        return membershipDto;
     }
 }

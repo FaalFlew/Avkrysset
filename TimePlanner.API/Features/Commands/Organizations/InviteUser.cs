@@ -19,9 +19,11 @@ public class InviteUserCommandValidator : AbstractValidator<InviteUserCommand>
     public InviteUserCommandValidator()
     {
         RuleFor(x => x.OrganizationId).NotEmpty();
-        RuleFor(x => x.Email).NotEmpty().EmailAddress();
-        RuleFor(x => x.Role)
-            .NotEmpty()
+        RuleFor(x => x.Email).Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("Email is required.")
+            .EmailAddress().WithMessage("A valid email address is required.");
+        RuleFor(x => x.Role).Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("Role is required.")
             .Must(role => role == OrganizationRoles.Admin || role == OrganizationRoles.Member)
             .WithMessage("Role must be 'Admin' or 'Member'.");
     }
@@ -48,10 +50,7 @@ public class InviteUserCommandHandler : IRequestHandler<InviteUserCommand, Organ
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Must be Admin or Owner.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to invite users to this organization.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to invite users to this organization.", cancellationToken);
 
         // Validation: Check if user is already an active member.
         var isAlreadyMember = await _context.OrganizationMemberships

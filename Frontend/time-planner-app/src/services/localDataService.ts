@@ -1,42 +1,59 @@
-// src/services/taskService.ts
+// src/services/localDataService.ts
+// Guest-mode persistence in localStorage.
 
-import { Task, TaskTemplate, Category } from "@/types";
-
-const TEMPLATES_STORAGE_KEY = "vue-time-planner-templates";
-
-// A helper to get items from localStorage and parse them
-
-// --- Task Service ---
-export const taskService = {
-  getTasks: (): Task[] => getItems<Task>(TASKS_STORAGE_KEY),
-  saveTasks: (tasks: Task[]): void => saveItems<Task>(TASKS_STORAGE_KEY, tasks),
-};
-
-// --- Template Service ---
-export const templateService = {
-  getTemplates: (): TaskTemplate[] =>
-    getItems<TaskTemplate>(TEMPLATES_STORAGE_KEY),
-  saveTemplates: (templates: TaskTemplate[]): void =>
-    saveItems<TaskTemplate>(TEMPLATES_STORAGE_KEY, templates),
-};
-
-// --- Category Service ---
-export const categoryService = {
-  getCategories: (): Category[] => getItems<Category>(CATEGORIES_STORAGE_KEY),
-  saveCategories: (categories: Category[]): void =>
-    saveItems<Category>(CATEGORIES_STORAGE_KEY, categories),
-};
-
-// MODIFIED FILE: src/services/localDataService.ts (previously taskService.ts)
+import type { Task, TaskTemplate, Category } from "@/types";
+import { normalizeStoredInstant } from "@/lib/datetime";
 
 const TASKS_STORAGE_KEY = "vue-time-planner-tasks";
-const TEMPLATES_STORAGE_key = "vue-time-planner-templates"; // Corrected key name from original file
+const TEMPLATES_STORAGE_KEY = "vue-time-planner-templates";
 const CATEGORIES_STORAGE_KEY = "vue-time-planner-categories";
 
-// A helper to get items from localStorage and parse them
+/** Suffix of the keys where entries the app cannot read are kept (never deleted by the app). */
+const UNREADABLE_SUFFIX = "-unreadable";
+
+/** Guest tasks the app could not read (e.g. an unparseable start), preserved verbatim. */
+export const UNREADABLE_TASKS_STORAGE_KEY = `${TASKS_STORAGE_KEY}${UNREADABLE_SUFFIX}`;
+
+/**
+ * Keep entries the app cannot use under `<key>-unreadable` instead of losing them: the task
+ * store saves its (filtered) state back to `<key>` on the next change. Entries are appended once
+ * (de-duplicated by their JSON), so repeated loads do not grow the backup.
+ */
+function preserveUnreadable(key: string, entries: unknown[]): void {
+  if (entries.length === 0) return;
+  const backupKey = `${key}${UNREADABLE_SUFFIX}`;
+  try {
+    const raw = localStorage.getItem(backupKey);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const existing: unknown[] = Array.isArray(parsed) ? parsed : [{ unparsedJson: raw }];
+    const seen = new Set(existing.map((entry) => JSON.stringify(entry)));
+    for (const entry of entries) {
+      const id = JSON.stringify(entry);
+      if (!seen.has(id)) {
+        existing.push(entry);
+        seen.add(id);
+      }
+    }
+    localStorage.setItem(backupKey, JSON.stringify(existing));
+  } catch (error) {
+    console.error(`Could not back up unreadable guest data from "${key}":`, error);
+  }
+}
+
+// A helper to get items from localStorage and parse them. A value that is not a JSON array is
+// backed up (see preserveUnreadable) before the app starts over with an empty list.
 function getItems<T>(key: string): T[] {
   const items = localStorage.getItem(key);
-  return items ? JSON.parse(items) : [];
+  if (!items) return [];
+  try {
+    const parsed: unknown = JSON.parse(items);
+    if (Array.isArray(parsed)) return parsed as T[];
+    console.error(`Guest data in "${key}" is not a list; keeping it under "${key}${UNREADABLE_SUFFIX}".`);
+  } catch (error) {
+    console.error(`Unreadable guest data in "${key}"; keeping it under "${key}${UNREADABLE_SUFFIX}".`, error);
+  }
+  preserveUnreadable(key, [{ unparsedJson: items }]);
+  return [];
 }
 
 // A helper to save items to localStorage
@@ -46,33 +63,55 @@ function saveItems<T>(key: string, items: T[]): void {
 
 // Helper to remove an item from localStorage
 function clearItems(key: string): void {
-  // ADDED this helper function
   localStorage.removeItem(key);
 }
 
+/**
+ * Guest tasks with `start` normalized to canonical UTC. Current data is already canonical;
+ * legacy entries saved as `"YYYY-MM-DD HH:mm:ss"` are local wall-clock time. Entries whose
+ * start cannot be read are left out of the result (with a warning) but preserved verbatim under
+ * {@link UNREADABLE_TASKS_STORAGE_KEY}, so the next save of the task list cannot lose them.
+ * The normalized values are written back by the task store's persistence subscriber.
+ */
+function getTasks(): Task[] {
+  const tasks: Task[] = [];
+  const unreadable: unknown[] = [];
+  for (const task of getItems<Task>(TASKS_STORAGE_KEY)) {
+    const start = normalizeStoredInstant(task?.start);
+    if (start === null) {
+      console.warn(
+        `Skipping a guest task with an unreadable start; it is kept under "${UNREADABLE_TASKS_STORAGE_KEY}":`,
+        task
+      );
+      unreadable.push(task);
+      continue;
+    }
+    tasks.push({ ...task, start });
+  }
+  preserveUnreadable(TASKS_STORAGE_KEY, unreadable);
+  return tasks;
+}
+
 // --- Task Service ---
-// MODIFIED: Export changed from taskService to localTaskService
 export const localTaskService = {
-  getTasks: (): Task[] => getItems<Task>(TASKS_STORAGE_KEY),
+  getTasks,
   saveTasks: (tasks: Task[]): void => saveItems<Task>(TASKS_STORAGE_KEY, tasks),
-  clearTasks: (): void => clearItems(TASKS_STORAGE_KEY), // ADDED clear function
+  clearTasks: (): void => clearItems(TASKS_STORAGE_KEY),
 };
 
 // --- Template Service ---
-// MODIFIED: Export changed from templateService to localTemplateService
 export const localTemplateService = {
   getTemplates: (): TaskTemplate[] =>
-    getItems<TaskTemplate>(TEMPLATES_STORAGE_key),
+    getItems<TaskTemplate>(TEMPLATES_STORAGE_KEY),
   saveTemplates: (templates: TaskTemplate[]): void =>
-    saveItems<TaskTemplate>(TEMPLATES_STORAGE_key, templates),
-  clearTemplates: (): void => clearItems(TEMPLATES_STORAGE_key), // ADDED clear function
+    saveItems<TaskTemplate>(TEMPLATES_STORAGE_KEY, templates),
+  clearTemplates: (): void => clearItems(TEMPLATES_STORAGE_KEY),
 };
 
 // --- Category Service ---
-// MODIFIED: Export changed from categoryService to localCategoryService
 export const localCategoryService = {
   getCategories: (): Category[] => getItems<Category>(CATEGORIES_STORAGE_KEY),
   saveCategories: (categories: Category[]): void =>
     saveItems<Category>(CATEGORIES_STORAGE_KEY, categories),
-  clearCategories: (): void => clearItems(CATEGORIES_STORAGE_KEY), // ADDED clear function
+  clearCategories: (): void => clearItems(CATEGORIES_STORAGE_KEY),
 };

@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
+using TimePlanner.API.Exceptions;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -31,10 +32,7 @@ public class DeleteIssueCommandHandler : IRequestHandler<DeleteIssueCommand>
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be Admin or Owner.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to delete issues in this organization.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to delete issues in this organization.", cancellationToken);
 
         var issue = await _context.Issues
             .FirstOrDefaultAsync(i => i.Id == request.IssueId && i.IssuePanelId == request.PanelId, cancellationToken);
@@ -47,7 +45,7 @@ public class DeleteIssueCommandHandler : IRequestHandler<DeleteIssueCommand>
 
         if (issue.ConvertedToTaskItemId.HasValue)
         {
-            throw new InvalidOperationException("Cannot delete an issue that has already been converted to a task. Delete the task instead.");
+            throw new ConflictException("Cannot delete an issue that has already been converted to a task. Delete the task instead.");
         }
 
         _context.Issues.Remove(issue);

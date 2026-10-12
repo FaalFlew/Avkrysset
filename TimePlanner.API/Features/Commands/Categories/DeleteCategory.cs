@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
+using TimePlanner.API.Exceptions;
 using TimePlanner.API.Models;
 using TimePlanner.API.Services;
 
@@ -44,7 +45,7 @@ public class DeleteCategoryCommandHandler : IRequestHandler<DeleteCategoryComman
 
         if (category.Id == otherCategory.Id)
         {
-            throw new InvalidOperationException("The default 'Other' category cannot be deleted.");
+            throw new BadRequestException("The default 'Other' category cannot be deleted.");
         }
 
         // Re-assign tasks

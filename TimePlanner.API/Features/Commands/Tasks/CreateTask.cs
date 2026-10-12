@@ -3,6 +3,8 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
+using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models;
 using TimePlanner.API.Services;
 
@@ -19,10 +21,12 @@ public class CreateTaskCommandValidator : AbstractValidator<CreateTaskCommand>
 {
     public CreateTaskCommandValidator()
     {
-        RuleFor(x => x.Title).NotEmpty();
-        RuleFor(x => x.Start).NotEmpty();
-        RuleFor(x => x.Duration).GreaterThan(0);
-        RuleFor(x => x.CategoryId).NotEmpty();
+        RuleFor(x => x.Title).NotEmpty().WithMessage(TaskRules.TitleRequired); // no length limit (Tasks.Title is nvarchar(max))
+        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
+        RuleFor(x => x.Duration)
+            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
+            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
+        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
     }
 }
 
@@ -50,17 +54,12 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskI
             throw new ValidationException($"Category with ID {request.CategoryId} not found for this user.");
         }
 
-        // 2. Business Rule: Overlap Check
-        var newEnd = request.Start.AddHours(request.Duration);
-        var isOverlapping = await _context.Tasks
-            .Where(t => t.UserId == userId)
-            // Checks if existing task ends after new task starts AND existing task starts before new task ends
-            .AnyAsync(t => (request.Start < t.Start.AddHours(t.Duration)) && (t.Start < newEnd), cancellationToken);
-
-        if (isOverlapping)
-        {
-            throw new InvalidOperationException("This time slot overlaps with an existing task.");
-        }
+        // 2. Business Rule: Overlap Check against everything in the user's planner
+        // (personal tasks and organization tasks assigned to them).
+        var newEnd = TaskOverlap.EndOf(request.Start, request.Duration);
+        await TaskOverlap.ThrowIfOverlapsAsync(
+            _context.Tasks.Where(PlannerScope.ForUser(_context, userId.Value)),
+            request.Start, newEnd, "This time slot overlaps with an existing task.", cancellationToken);
 
         // 3. Create and Save Task
         var task = new TaskItem
@@ -81,16 +80,8 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskI
         await _context.SaveChangesAsync(cancellationToken);
 
         // 4. Return DTO
-        return new TaskItemDto
-        {
-            Id = task.Id,
-            Title = task.Title,
-            Start = task.Start,
-            Duration = task.Duration,
-            CategoryId = task.CategoryId,
-            CategoryName = category.Name,
-            CategoryColor = category.Color,
-            TemplateId = task.TemplateId
-        };
+        var dto = await TaskProjections.LoadAsync(_context, task.Id, cancellationToken);
+        dto.Capabilities = TaskCapabilities.For(null, userId.Value, userId.Value, null);
+        return dto;
     }
 }

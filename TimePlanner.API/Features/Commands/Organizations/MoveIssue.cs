@@ -30,10 +30,7 @@ public class MoveIssueCommandHandler : IRequestHandler<MoveIssueCommand>
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be Admin or Owner to move issues.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to move issues in this organization.");
-        }
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to move issues in this organization.", cancellationToken);
 
         // 1. Find the issue to move.
         var issue = await _context.Issues

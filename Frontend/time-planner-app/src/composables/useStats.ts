@@ -1,465 +1,415 @@
 // src/composables/useStats.ts
+//
+// Analytics data for the /analytics page. Both modes produce the same view model
+// (AnalyticsSnapshot) for the selected range:
+// - guest: computed locally from the tasks in localStorage;
+// - authenticated: fetched from /tasks/analytics for the same half-open instant range and
+//   mapped onto the same zero-filled period buckets (see src/lib/analyticsBuckets.ts).
+// Presentation (labels, colors, chart options) lives in src/components/analytics/*.
 
-import { computed, Ref, ref, watch, onMounted } from "vue"; // ADDED ref and watch
+import { computed, ref, watch, onMounted, type ComputedRef, type Ref } from "vue";
 import { useTaskStore } from "@/stores/taskStore";
 import { storeToRefs } from "pinia";
-import dayjs from "dayjs";
-import weekOfYear from "dayjs/plugin/weekOfYear";
-import isoWeek from "dayjs/plugin/isoWeek";
-import localizedFormat from "dayjs/plugin/localizedFormat"; // <-- Import the plugin here as well for consistency
-import localeData from "dayjs/plugin/localeData"; // ✅
-import { useAuthStore } from "@/stores/authStore"; // ADDED
-import { Task, TaskAnalyticsResponse } from "@/types"; // MODIFIED
-import { apiDataService } from "@/services/apiDataService"; // ADDED
+import { useAuthStore } from "@/stores/authStore";
+import type { Task, TaskAnalyticsResponse } from "@/types";
+import { apiDataService } from "@/services/apiDataService";
+import { dateKeyParts, isInRange, isoWeekOf, todayKey } from "@/lib/datetime";
+import { useTimeZone } from "@/composables/useClock";
+import {
+  analyticsBuckets,
+  analyticsRange,
+  bucketKeyOf,
+  densifyBreakdown,
+  isoWeekYearsOfCalendarYears,
+  yearsOfInstants,
+  type AnalyticsSelection,
+  type AnalyticsView,
+} from "@/lib/analyticsBuckets";
+import { fullBucketLabel, shortBucketLabel } from "@/components/analytics/format";
 
-dayjs.extend(weekOfYear);
-dayjs.extend(isoWeek);
-dayjs.extend(localizedFormat); // <-- Extend dayjs here
-dayjs.extend(localeData); // ✅
+export type { AnalyticsSelection, AnalyticsView };
 
-const DATE_FORMAT = "YYYY-MM-DD HH:mm:ss";
-const NEUTRAL_COLOR = "#A0AEC0"; // A neutral grey for bars with no dominant category
-
-// Helper function to find the dominant category color from a map of totals.
-function getDominantColor(
-  totals: Record<string, number>,
-  store: ReturnType<typeof useTaskStore>
-): string {
-  if (Object.keys(totals).length === 0) {
-    return NEUTRAL_COLOR;
-  }
-
-  // Find the category ID with the most hours
-  const dominantCategoryId = Object.entries(totals).reduce((a, b) =>
-    b[1] > a[1] ? b : a
-  )[0];
-
-  const category = store.getCategoryById(dominantCategoryId);
-  return category?.color || NEUTRAL_COLOR;
+/** Hours spent in one category. `color` is the category's hex, or null when unknown. */
+export interface CategoryHours {
+  id: string;
+  name: string;
+  color: string | null;
+  hours: number;
 }
 
-// Filters tasks based on the selected criteria from the UI.
-function getFilteredTasks(
-  allTasks: Ref<Task[]>,
-  year: Ref<number>,
-  view: Ref<"monthly" | "weekly" | "daily">,
-  monthRange: Ref<{ start: number; end: number }>,
-  weekRange: Ref<{ start: number; end: number }>,
-  dailyWeek: Ref<number>
-): Ref<Task[]> {
-  return computed(() => {
-    const selectedYear = year.value;
-    return allTasks.value.filter((task) => {
-      const taskDate = dayjs(task.start, DATE_FORMAT);
-      if (taskDate.year() !== selectedYear) return false;
+/** One bar of the "Hours by period" chart. */
+export interface PeriodBar {
+  key: string;
+  /** Axis label: "Jan", "W14", "Mon 5". */
+  label: string;
+  /** Tooltip/table label: "March 2026", "Week 14 · Mar 30 – Apr 5, 2026", "Mon, Oct 5". */
+  fullLabel: string;
+  hours: number;
+  /** Categories in this period, largest first. Only known for guest data (null otherwise). */
+  categories: CategoryHours[] | null;
+  /** Name of the category with the most hours in this period, when known. */
+  topCategory: string | null;
+}
 
-      switch (view.value) {
-        case "monthly":
-          const month = taskDate.month();
-          return (
-            month >= monthRange.value.start && month <= monthRange.value.end
-          );
+/** A category's share of the selected range. */
+export interface CategorySlice extends CategoryHours {
+  /** 0–1 share of the range's total hours. */
+  share: number;
+}
 
-        case "weekly":
-          const week = taskDate.isoWeek();
-          return week >= weekRange.value.start && week <= weekRange.value.end;
+/** A template's time in the selected range. */
+export interface TemplateRow {
+  id: string;
+  name: string;
+  color: string | null;
+  hours: number;
+  share: number;
+  /** The template no longer exists (tasks keep their link to it). */
+  deleted: boolean;
+}
 
-        case "daily":
-          return taskDate.isoWeek() === dailyWeek.value;
+export interface AnalyticsSnapshot {
+  /** The selection this data belongs to (may lag the filters while a refetch is running). */
+  selection: AnalyticsSelection;
+  /** Every period of the selected range, in order, zero-filled. */
+  periods: PeriodBar[];
+  /** The server breakdown could not be mapped onto periods; `periods` is the raw (sparse) list. */
+  sparse: boolean;
+  /** Largest first. */
+  categories: CategorySlice[];
+  /** Largest first. */
+  templates: TemplateRow[];
+  /** Hours of tasks without a template. */
+  untemplatedHours: number;
+  totalHours: number;
+}
 
-        default:
-          return true;
-      }
-    });
-  });
+export interface StatsFilters {
+  /** Calendar year for "monthly"; ISO week-year for "weekly" and "daily". */
+  year: Ref<number>;
+  view: Ref<AnalyticsView>;
+  /** 0-based months, inclusive. */
+  monthRange: Ref<{ start: number; end: number }>;
+  /** ISO week numbers, inclusive. */
+  weekRange: Ref<{ start: number; end: number }>;
+  /** ISO week shown by the daily view. */
+  dailyWeek: Ref<number>;
+}
+
+export interface FilteredStats {
+  /** Data for the current (or, while refetching, the previous) selection; null before the first load. */
+  snapshot: ComputedRef<AnalyticsSnapshot | null>;
+  /** First load in progress (nothing to show yet). */
+  isLoading: ComputedRef<boolean>;
+  /** A refetch is running while previous data is on screen. */
+  isRefetching: ComputedRef<boolean>;
+  /** Message of the last failed request, or null. */
+  error: Readonly<Ref<string | null>>;
+  /** Re-run the request for the current selection (no-op for guests). */
+  refetch: () => Promise<void>;
+  totalHours: ComputedRef<number>;
+  /**
+   * Whether the user has any tasks at all (first-run detection). Known for guests; the API has
+   * no cheap way to tell, so authenticated users are assumed to have data.
+   */
+  hasAnyData: ComputedRef<boolean>;
+}
+
+const currentYear = () => dateKeyParts(todayKey()).year;
+const currentIsoYear = () => isoWeekOf(todayKey()).isoYear;
+
+function selectionOf(filters: StatsFilters): AnalyticsSelection {
+  return {
+    view: filters.view.value,
+    year: filters.year.value,
+    monthRange: { ...filters.monthRange.value },
+    weekRange: { ...filters.weekRange.value },
+    dailyWeek: filters.dailyWeek.value,
+  };
+}
+
+const byHoursDesc = <T extends { hours: number }>(a: T, b: T) => b.hours - a.hours;
+const share = (hours: number, total: number) => (total > 0 ? hours / total : 0);
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return "Request failed";
 }
 
 export function useStats() {
   const store = useTaskStore();
   const { tasks, templates } = storeToRefs(store);
-  const authStore = useAuthStore(); // ADDED
+  const authStore = useAuthStore();
 
-  // Provides a list of years that have tasks, for the year selector dropdown.
-  const availableYears = ref<number[]>([dayjs().year()]);
-  onMounted(async () => {
-    if (authStore.isAuthenticated) {
-      // --- AUTHENTICATED STRATEGY ---
-      // Fetch the complete list of years from our dedicated backend endpoint.
-      try {
-        const years = await apiDataService.getTaskYears();
-        availableYears.value = years;
-      } catch (error) {
-        console.error("Failed to fetch available years:", error);
-        // On error, we still have the fallback value.
-        availableYears.value = [dayjs().year()];
-      }
-    } else {
-      // --- GUEST STRATEGY ---
-      // Use the existing logic to calculate years from localStorage tasks.
-      if (tasks.value.length > 0) {
-        const years = new Set(
-          tasks.value.map((task) => dayjs(task.start).year())
-        );
-        availableYears.value = Array.from(years).sort((a, b) => b - a);
-      }
+  // Guests: on a hard refresh of /analytics this page can mount before App.vue loads local
+  // data. Load it now so the first render is not a false "no data" state.
+  if (!authStore.isAuthenticated && !store.guestDataLoaded) store.loadGuestData();
+
+  // Buckets follow the device's calendar: recompute (guests) or refetch (API) when it changes.
+  const { timeZone } = useTimeZone();
+
+  // Years that have tasks, for the year selector: calendar years for the Month view and ISO
+  // week-years for the Week/Day views (2024-12-30 is in 2025-W01). Newest first.
+  const availableYears = ref<number[]>([currentYear()]);
+  const availableIsoYears = ref<number[]>([currentIsoYear()]);
+
+  async function loadYears(): Promise<void> {
+    // AUTHENTICATED: the server lists calendar years (in the X-Time-Zone calendar).
+    try {
+      const years = await apiDataService.getTaskYears();
+      availableYears.value = years.length > 0 ? years : [currentYear()];
+    } catch (error) {
+      console.error("Failed to fetch available years:", error);
+      availableYears.value = [currentYear()];
     }
+    availableIsoYears.value = isoWeekYearsOfCalendarYears(availableYears.value);
+  }
+
+  onMounted(() => {
+    if (authStore.isAuthenticated) loadYears();
   });
 
   watch(
-    tasks,
-    (newTasks) => {
-      if (!authStore.isAuthenticated && newTasks.length > 0) {
-        const years = new Set(newTasks.map((task) => dayjs(task.start).year()));
-        availableYears.value = Array.from(years).sort((a, b) => b - a);
-      }
+    [tasks, timeZone],
+    ([newTasks]) => {
+      if (authStore.isAuthenticated || newTasks.length === 0) return;
+      // GUEST: exact years of the local tasks.
+      const years = yearsOfInstants(newTasks.map((task) => task.start));
+      availableYears.value = years.calendarYears;
+      availableIsoYears.value = years.isoYears;
     },
-    { deep: true }
+    { deep: true, immediate: true }
   );
 
-  // Main composable function to generate reactive stats based on filters.
-  const useFilteredStats = (filters: {
-    year: Ref<number>;
-    view: Ref<"monthly" | "weekly" | "daily">;
-    monthRange: Ref<{ start: number; end: number }>;
-    weekRange: Ref<{ start: number; end: number }>;
-    dailyWeek: Ref<number>;
-  }) => {
-    if (authStore.isAuthenticated) {
-      const isLoading = ref(true);
-      const analyticsData = ref<TaskAnalyticsResponse | null>(null);
+  watch(timeZone, () => {
+    if (authStore.isAuthenticated) loadYears();
+  });
 
-      watch(
-        () => [
-          filters.year.value,
-          filters.view.value,
-          filters.monthRange.value,
-          filters.weekRange.value,
-          filters.dailyWeek.value,
-        ],
-        async () => {
-          isLoading.value = true;
-
-          let startDate: dayjs.Dayjs;
-          let endDate: dayjs.Dayjs;
-          const year = filters.year.value;
-          const view = filters.view.value;
-
-          switch (view) {
-            case "monthly":
-              // Use the selected start and end months.
-              startDate = dayjs()
-                .year(year)
-                .month(filters.monthRange.value.start)
-                .startOf("month");
-              endDate = dayjs()
-                .year(year)
-                .month(filters.monthRange.value.end)
-                .endOf("month");
-              break;
-
-            case "weekly":
-              // Use the selected start and end ISO weeks.
-              startDate = dayjs()
-                .year(year)
-                .isoWeek(filters.weekRange.value.start)
-                .startOf("isoWeek");
-              endDate = dayjs()
-                .year(year)
-                .isoWeek(filters.weekRange.value.end)
-                .endOf("isoWeek");
-              break;
-
-            case "daily":
-              // The "daily" view shows all days within a single selected week.
-              startDate = dayjs()
-                .year(year)
-                .isoWeek(filters.dailyWeek.value)
-                .startOf("isoWeek");
-              endDate = dayjs()
-                .year(year)
-                .isoWeek(filters.dailyWeek.value)
-                .endOf("isoWeek");
-              break;
-          }
-
-          try {
-            // Send the precisely calculated date range and the current view type to the API.
-            analyticsData.value = await apiDataService.getTaskAnalytics(
-              startDate.toISOString(),
-              endDate.toISOString(),
-              view
-            );
-          } catch (e) {
-            console.error("Failed to fetch analytics", e);
-            analyticsData.value = null;
-          } finally {
-            isLoading.value = false;
-          }
-        },
-        { immediate: true, deep: true } // Use deep watch for monthRange/weekRange objects
-      );
-
-      const categoryDistributionChartData = computed(() => {
-        if (!analyticsData.value) return { labels: [], datasets: [] };
-        return {
-          labels: analyticsData.value.timePerCategory.map(
-            (c) => c.categoryName
-          ),
-          datasets: [
-            {
-              backgroundColor: analyticsData.value.timePerCategory.map(
-                (c) => c.categoryColor
-              ),
-              data: analyticsData.value.timePerCategory.map(
-                (c) => c.totalHours
-              ),
-            },
-          ],
-        };
-      });
-
-      const totalTimePerTemplate = computed(() => {
-        if (!analyticsData.value) return [];
-        return analyticsData.value.timePerTemplate.map((t) => ({
-          name: t.templateTitle,
-          time: t.totalHours,
-          color: t.categoryColor,
-        }));
-      });
-
-      const mainBreakdownChartData = computed(() => {
-        if (!analyticsData.value) return { labels: [], datasets: [] };
-
-        if (filters.view.value === "daily") {
-          const startOfWeek = dayjs()
-            .year(filters.year.value)
-            .isoWeek(filters.dailyWeek.value)
-            .startOf("isoWeek");
-          const dayMap: Record<string, string> = {};
-          for (let i = 0; i < 7; i++) {
-            const day = startOfWeek.add(i, "day");
-            dayMap[day.format("dddd")] = day.format("ddd D"); // Maps "Monday" -> "Mon 15"
-          }
-
-          const remappedData = analyticsData.value.breakdownData.map((d) => ({
-            ...d,
-            label: dayMap[d.label] || d.label, // Use the remapped label
-          }));
-
-          return {
-            labels: remappedData.map((d) => d.label),
-            datasets: [
-              {
-                label: "Total Hours",
-                backgroundColor: remappedData.map(
-                  (d) => d.dominantCategoryColor
-                ),
-                data: remappedData.map((d) => d.value),
-              },
-            ],
-          };
-        }
-        return {
-          labels: analyticsData.value.breakdownData.map((d) => d.label),
-          datasets: [
-            {
-              label: "Total Hours",
-              backgroundColor: analyticsData.value.breakdownData.map(
-                (d) => d.dominantCategoryColor
-              ),
-              data: analyticsData.value.breakdownData.map((d) => d.value),
-            },
-          ],
-        };
-      });
-
-      return {
-        isLoading, // Expose loading state
-        categoryDistributionChartData,
-        totalTimePerTemplate,
-        mainBreakdownChartData,
-      };
-    } else {
-      const filteredTasks = getFilteredTasks(
-        tasks,
-        filters.year,
-        filters.view,
-        filters.monthRange,
-        filters.weekRange,
-        filters.dailyWeek
-      );
-
-      // Generates data for the "Time by Category" pie chart.
-      const categoryDistributionChartData = computed(() => {
-        const stats: Record<
-          string,
-          { name: string; time: number; color: string }
-        > = {};
-        filteredTasks.value.forEach((task) => {
-          const category = store.getCategoryById(task.categoryId);
-          if (!category) return;
-          if (!stats[category.id]) {
-            stats[category.id] = {
-              name: category.name,
-              time: 0,
-              color: category.color,
-            };
-          }
-          stats[category.id].time += task.duration;
-        });
-        const data = Object.values(stats);
-        return {
-          labels: data.map((d) => d.name),
-          datasets: [
-            {
-              backgroundColor: data.map((d) => d.color),
-              data: data.map((d) => d.time),
-            },
-          ],
-        };
-      });
-
-      // Generates data for the "Total Time per Task Type" table.
-      const totalTimePerTemplate = computed(() => {
-        const stats: Record<
-          string,
-          { name: string; time: number; color: string }
-        > = {};
-        templates.value.forEach((template) => {
-          const category = store.getCategoryById(template.categoryId);
-          stats[template.id] = {
-            name: template.title,
-            time: 0,
-            color: category?.color || "#ccc",
-          };
-        });
-        filteredTasks.value.forEach((task) => {
-          if (task.templateId && stats[task.templateId]) {
-            stats[task.templateId].time += task.duration;
-          }
-        });
-        return Object.values(stats).filter((s) => s.time > 0);
-      });
-
-      const mainBreakdownChartData = computed(() => {
-        const view = filters.view.value;
-        const year = filters.year.value;
-
-        switch (view) {
-          case "monthly": {
-            const monthlyCategoryTotals: Record<string, number>[] = Array.from(
-              { length: 12 },
-              () => ({})
-            );
-            filteredTasks.value.forEach((task) => {
-              const monthIndex = dayjs(task.start, DATE_FORMAT).month();
-              monthlyCategoryTotals[monthIndex][task.categoryId] =
-                (monthlyCategoryTotals[monthIndex][task.categoryId] || 0) +
-                task.duration;
-            });
-
-            const data = monthlyCategoryTotals.map((totals) =>
-              Object.values(totals).reduce((sum, hours) => sum + hours, 0)
-            );
-            const colors = monthlyCategoryTotals.map((totals) =>
-              getDominantColor(totals, store)
-            );
-
-            return {
-              labels: dayjs.months(),
-              datasets: [
-                {
-                  label: `Total Hours`, // Label is simpler now, as tooltip is richer
-                  backgroundColor: colors,
-                  data,
-                  categoryTotals: monthlyCategoryTotals, // <-- ATTACH DETAILED DATA
-                },
-              ],
-            };
-          }
-          case "weekly": {
-            const weeklyCategoryTotals: Record<string, number>[] = Array.from(
-              { length: 52 },
-              () => ({})
-            );
-            filteredTasks.value.forEach((task) => {
-              const weekIndex = dayjs(task.start, DATE_FORMAT).isoWeek() - 1;
-              if (weekIndex >= 0 && weekIndex < 52) {
-                weeklyCategoryTotals[weekIndex][task.categoryId] =
-                  (weeklyCategoryTotals[weekIndex][task.categoryId] || 0) +
-                  task.duration;
-              }
-            });
-
-            const data = weeklyCategoryTotals.map((totals) =>
-              Object.values(totals).reduce((sum, hours) => sum + hours, 0)
-            );
-            const colors = weeklyCategoryTotals.map((totals) =>
-              getDominantColor(totals, store)
-            );
-
-            return {
-              labels: Array.from({ length: 52 }, (_, i) => `Week ${i + 1}`),
-              datasets: [
-                {
-                  label: `Total Hours`,
-                  backgroundColor: colors,
-                  data,
-                  categoryTotals: weeklyCategoryTotals, // <-- ATTACH DETAILED DATA
-                },
-              ],
-            };
-          }
-          case "daily": {
-            const dailyCategoryTotals: Record<string, number>[] = Array.from(
-              { length: 7 },
-              () => ({})
-            );
-            const week = filters.dailyWeek.value;
-            const startOfWeek = dayjs()
-              .year(year)
-              .isoWeek(week)
-              .startOf("isoWeek");
-
-            filteredTasks.value.forEach((task) => {
-              const dayIndex = dayjs(task.start, DATE_FORMAT).isoWeekday() - 1;
-              dailyCategoryTotals[dayIndex][task.categoryId] =
-                (dailyCategoryTotals[dayIndex][task.categoryId] || 0) +
-                task.duration;
-            });
-
-            const data = dailyCategoryTotals.map((totals) =>
-              Object.values(totals).reduce((sum, hours) => sum + hours, 0)
-            );
-            const colors = dailyCategoryTotals.map((totals) =>
-              getDominantColor(totals, store)
-            );
-
-            return {
-              labels: Array.from({ length: 7 }, (_, i) =>
-                startOfWeek.add(i, "day").format("ddd D")
-              ),
-              datasets: [
-                {
-                  label: `Total Hours`,
-                  backgroundColor: colors,
-                  data,
-                  categoryTotals: dailyCategoryTotals, // <-- ATTACH DETAILED DATA
-                },
-              ],
-            };
-          }
-        }
-      });
-
-      return {
-        isLoading: ref(false), // Guest mode is never loading from API
-        categoryDistributionChartData,
-        totalTimePerTemplate,
-        mainBreakdownChartData,
-      };
-    }
+  const categoryInfo = (id: string, task?: Task): Omit<CategoryHours, "hours"> => {
+    const category = store.getCategoryById(id);
+    return {
+      id,
+      name: category?.name ?? task?.categoryName ?? "Unknown category",
+      color: category?.color ?? task?.categoryColor ?? null,
+    };
   };
 
-  return { availableYears, useFilteredStats };
+  // --- Guest: everything from local tasks ---------------------------------------------------
+  function guestSnapshot(sel: AnalyticsSelection): AnalyticsSnapshot {
+    const range = analyticsRange(sel);
+    const inRange = tasks.value.filter((task) => isInRange(task.start, range));
+    const buckets = analyticsBuckets(sel);
+
+    const perBucket = new Map<string, Map<string, number>>(buckets.map((b) => [b.key, new Map()]));
+    const perCategory = new Map<string, { hours: number; sample: Task }>();
+    const perTemplate = new Map<string, { hours: number; sample: Task }>();
+    let totalHours = 0;
+    let templatedHours = 0;
+
+    for (const task of inRange) {
+      const hours = Number(task.duration) || 0;
+      totalHours += hours;
+
+      const bucket = perBucket.get(bucketKeyOf(sel.view, task.start));
+      if (bucket) bucket.set(task.categoryId, (bucket.get(task.categoryId) ?? 0) + hours);
+
+      const cat = perCategory.get(task.categoryId);
+      if (cat) cat.hours += hours;
+      else perCategory.set(task.categoryId, { hours, sample: task });
+
+      if (task.templateId) {
+        templatedHours += hours;
+        const tpl = perTemplate.get(task.templateId);
+        if (tpl) tpl.hours += hours;
+        else perTemplate.set(task.templateId, { hours, sample: task });
+      }
+    }
+
+    const periods: PeriodBar[] = buckets.map((b) => {
+      const totals = perBucket.get(b.key)!;
+      const categories = [...totals.entries()]
+        .map(([id, hours]) => ({ ...categoryInfo(id), hours }))
+        .sort(byHoursDesc);
+      return {
+        key: b.key,
+        label: shortBucketLabel(sel.view, b.key),
+        fullLabel: fullBucketLabel(sel.view, b.key),
+        hours: categories.reduce((sum, c) => sum + c.hours, 0),
+        categories,
+        topCategory: categories[0]?.name ?? null,
+      };
+    });
+
+    const categories: CategorySlice[] = [...perCategory.entries()]
+      .map(([id, { hours, sample }]) => ({
+        ...categoryInfo(id, sample),
+        hours,
+        share: share(hours, totalHours),
+      }))
+      .sort(byHoursDesc);
+
+    const templateRows: TemplateRow[] = [...perTemplate.entries()]
+      .map(([id, { hours, sample }]) => {
+        const template = templates.value.find((t) => t.id === id);
+        const color = template
+          ? (store.getCategoryById(template.categoryId)?.color ?? template.categoryColor ?? null)
+          : categoryInfo(sample.categoryId, sample).color;
+        return {
+          id,
+          name: template?.title ?? "Deleted template",
+          color,
+          hours,
+          share: share(hours, totalHours),
+          deleted: !template,
+        };
+      })
+      .sort(byHoursDesc);
+
+    return {
+      selection: sel,
+      periods,
+      sparse: false,
+      categories,
+      templates: templateRows,
+      untemplatedHours: Math.max(0, totalHours - templatedHours),
+      totalHours,
+    };
+  }
+
+  // --- Authenticated: map the API response onto the same model -----------------------------
+  function apiSnapshot(sel: AnalyticsSelection, data: TaskAnalyticsResponse): AnalyticsSnapshot {
+    const timePerCategory = Array.isArray(data.timePerCategory) ? data.timePerCategory : [];
+    const timePerTemplate = Array.isArray(data.timePerTemplate) ? data.timePerTemplate : [];
+    const breakdown = Array.isArray(data.breakdownData) ? data.breakdownData : [];
+    const totalHours = Number.isFinite(data.totalHours)
+      ? data.totalHours
+      : timePerCategory.reduce((sum, c) => sum + (c.totalHours || 0), 0);
+
+    // The API names only the dominant category's color per period; name it when unambiguous.
+    const topCategoryByColor = (color: string | undefined): string | null => {
+      if (!color) return null;
+      const matches = timePerCategory.filter(
+        (c) => c.categoryColor?.toLowerCase() === color.toLowerCase()
+      );
+      return matches.length === 1 ? matches[0]!.categoryName : null;
+    };
+
+    const dense = densifyBreakdown(sel, breakdown, "");
+    const periods: PeriodBar[] = dense
+      ? dense.map((bar) => ({
+          key: bar.key,
+          label: shortBucketLabel(sel.view, bar.key),
+          fullLabel: fullBucketLabel(sel.view, bar.key),
+          hours: bar.value,
+          categories: null,
+          topCategory: bar.value > 0 ? topCategoryByColor(bar.color) : null,
+        }))
+      : breakdown.map((d) => ({
+          key: d.key ?? d.label,
+          label: d.key ? shortBucketLabel(sel.view, d.key) : d.label,
+          fullLabel: d.key ? fullBucketLabel(sel.view, d.key) : d.label,
+          hours: d.value,
+          categories: null,
+          topCategory: topCategoryByColor(d.dominantCategoryColor),
+        }));
+
+    const categories: CategorySlice[] = timePerCategory
+      .map((c) => ({
+        id: c.categoryId,
+        name: c.categoryName || "Unknown category",
+        color: c.categoryColor || null,
+        hours: c.totalHours,
+        share: share(c.totalHours, totalHours),
+      }))
+      .sort(byHoursDesc);
+
+    const templateRows: TemplateRow[] = timePerTemplate
+      .map((t, index) => ({
+        id: t.templateId ?? `deleted-${index}`,
+        name: t.templateTitle || "Deleted template",
+        color: t.categoryColor || null,
+        hours: t.totalHours,
+        share: share(t.totalHours, totalHours),
+        deleted: !t.templateTitle,
+      }))
+      .sort(byHoursDesc);
+    const templatedHours = templateRows.reduce((sum, t) => sum + t.hours, 0);
+
+    return {
+      selection: sel,
+      periods,
+      sparse: !dense,
+      categories,
+      templates: templateRows,
+      untemplatedHours: Math.max(0, totalHours - templatedHours),
+      totalHours,
+    };
+  }
+
+  // Main composable function to generate reactive stats based on filters.
+  const useFilteredStats = (filters: StatsFilters): FilteredStats => {
+    const selection = computed(() => selectionOf(filters));
+
+    if (!authStore.isAuthenticated) {
+      const snapshot = computed(() => {
+        void timeZone.value; // re-bucket in the new zone's calendar after a zone change
+        return guestSnapshot(selection.value);
+      });
+      return {
+        snapshot,
+        isLoading: computed(() => false),
+        isRefetching: computed(() => false),
+        error: ref(null),
+        refetch: async () => {},
+        totalHours: computed(() => snapshot.value.totalHours),
+        hasAnyData: computed(() => tasks.value.length > 0),
+      };
+    }
+
+    const response = ref<TaskAnalyticsResponse | null>(null);
+    // The selection the current response was fetched for.
+    const loadedSelection = ref<AnalyticsSelection>(selection.value);
+    const pending = ref(0);
+    const error = ref<string | null>(null);
+    let latestRequest = 0;
+
+    async function load(sel: AnalyticsSelection): Promise<void> {
+      const requestId = ++latestRequest;
+      pending.value++;
+      try {
+        // Half-open instant range of the selected local months/weeks.
+        const data = await apiDataService.getTaskAnalytics(analyticsRange(sel), sel.view);
+        if (requestId !== latestRequest) return; // a newer selection superseded this one
+        response.value = data;
+        loadedSelection.value = sel;
+        error.value = null;
+      } catch (e) {
+        if (requestId !== latestRequest) return;
+        console.error("Failed to fetch analytics", e);
+        error.value = errorMessage(e);
+      } finally {
+        pending.value--;
+      }
+    }
+
+    watch(selection, (sel) => load(sel), { immediate: true, deep: true });
+    // The server buckets by the X-Time-Zone header, so a zone change needs fresh data.
+    watch(timeZone, () => load(selection.value));
+
+    const snapshot = computed(() =>
+      response.value ? apiSnapshot(loadedSelection.value, response.value) : null
+    );
+
+    return {
+      snapshot,
+      isLoading: computed(() => pending.value > 0 && !response.value),
+      isRefetching: computed(() => pending.value > 0 && !!response.value),
+      error,
+      refetch: () => load(selection.value),
+      totalHours: computed(() => snapshot.value?.totalHours ?? 0),
+      hasAnyData: computed(() => true),
+    };
+  };
+
+  return { availableYears, availableIsoYears, useFilteredStats };
 }

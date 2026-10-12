@@ -8,12 +8,22 @@ using TimePlanner.API.Data;
 using TimePlanner.API.Models;
 using TimePlanner.API.Services;
 using TimePlanner.API.Middleware;
+using TimePlanner.API.Utilities;
+using TimePlanner.API.Utilities.Json;
 using Serilog;
 using FluentValidation;
-using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
+using TimePlanner.API.Behaviors;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Secrets (JWT signing key, Postmark token) live in a gitignored appsettings.Secrets.json next to
+// appsettings.json (template: appsettings.Secrets.example.json). Environment variables are re-added
+// afterwards so Azure App Settings and test overrides still take precedence over the file.
+builder.Configuration
+    .AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
 // 1. SERILOG SETUP
 builder.Host.UseSerilog((context, configuration) =>
@@ -40,7 +50,12 @@ try
     };
 
     // --- SERVICES ---
-    builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+    builder.Services.AddMediatR(cfg =>
+    {
+        cfg.RegisterServicesFromAssembly(typeof(Program).Assembly);
+        // Runs the FluentValidation validators of every command/query before its handler.
+        cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+    });
 
     // DATABASE SETUP WITH TRANSIENT FAULT HANDLING
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -109,8 +124,31 @@ try
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+            // Every DateTime is a UTC instant on the wire: "yyyy-MM-ddTHH:mm:ss.fffZ".
+            options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+        })
+        .ConfigureApiBehaviorOptions(options =>
+        {
+            // Model-binding failures (malformed JSON, unparseable values, missing required fields) use the
+            // same { message, errors } body as every other API error instead of ValidationProblemDetails.
+            options.InvalidModelStateResponseFactory = context =>
+            {
+                var errors = context.ModelState
+                    .Where(entry => entry.Value is { Errors.Count: > 0 })
+                    .SelectMany(entry => entry.Value!.Errors.Select(error =>
+                        string.IsNullOrWhiteSpace(error.ErrorMessage) ? $"'{entry.Key}' is invalid." : error.ErrorMessage))
+                    .Distinct()
+                    .ToList();
+                return new BadRequestObjectResult(new
+                {
+                    message = "Some of the submitted values are missing or invalid.",
+                    errors
+                });
+            };
         });
-    builder.Services.AddFluentValidationAutoValidation();
+    // Validators run once, in the MediatR ValidationBehavior (registered above). MVC auto-validation is
+    // not enabled: it would validate commands bound from the body a second time and answer with a
+    // different error shape (ValidationProblemDetails).
     builder.Services.AddValidatorsFromAssemblyContaining<Program>();
     builder.Services.AddEndpointsApiExplorer();
 
@@ -141,12 +179,32 @@ try
     });
 
     // SIGNALR SETUP
-    builder.Services.AddSignalR();
+    builder.Services.AddSignalR()
+        .AddJsonProtocol(options =>
+            options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter()));
 
     // ==========================================
     // --- PIPELINE & MIDDLEWARE CONFIGURATION ---
     // ==========================================
     var app = builder.Build();
+
+    // Time zone self-check: analytics bucket by the client's IANA zone (X-Time-Zone header).
+    // If this host cannot resolve IANA ids, analytics silently fall back to UTC, so make it visible.
+    foreach (var probeId in new[] { "Europe/Oslo", "Asia/Calcutta" })
+    {
+        if (TimeZoneResolver.TryResolve(probeId, out var probeZone))
+        {
+            app.Logger.LogInformation(
+                "Time zone self-check: '{TimeZoneId}' resolved to '{ResolvedId}' (current UTC offset {Offset}).",
+                probeId, probeZone.Id, probeZone.GetUtcOffset(DateTime.UtcNow));
+        }
+        else
+        {
+            app.Logger.LogWarning(
+                "Time zone self-check: '{TimeZoneId}' could not be resolved; analytics for such clients will use UTC.",
+                probeId);
+        }
+    }
 
     // 1. Forwarded Headers (CRITICAL FOR AZURE LINUX/WINDOWS PROXIES)
     app.UseForwardedHeaders(new ForwardedHeadersOptions
@@ -182,7 +240,7 @@ try
 
     app.Run();
 }
-catch (Exception ex)
+catch (Exception ex) when (ex is not HostAbortedException) // HostAbortedException is the normal exit for EF design-time tools
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
 }
@@ -190,3 +248,6 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+// Exposes the entry point to WebApplicationFactory<Program> in the integration tests.
+public partial class Program { }

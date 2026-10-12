@@ -2,6 +2,7 @@ using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
+using TimePlanner.API.Exceptions;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -14,7 +15,8 @@ public class UpdateMemberRoleCommandValidator : AbstractValidator<UpdateMemberRo
 {
     public UpdateMemberRoleCommandValidator()
     {
-        RuleFor(x => x.NewRole).NotEmpty()
+        RuleFor(x => x.NewRole).Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("Role is required.")
             .Must(role => role == OrganizationRoles.Admin || role == OrganizationRoles.Member)
             .WithMessage("Role must be either 'Admin' or 'Member'.");
     }
@@ -42,10 +44,7 @@ public class UpdateMemberRoleCommandHandler : IRequestHandler<UpdateMemberRoleCo
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Must be an Admin or Owner to change roles.
-        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
-        {
-            throw new UnauthorizedAccessException("You do not have permission to change member roles.");
-        }
+        var actor = await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to change member roles.", cancellationToken);
 
         var membershipToUpdate = await _context.OrganizationMemberships
             .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == request.UserId, cancellationToken);
@@ -58,16 +57,15 @@ public class UpdateMemberRoleCommandHandler : IRequestHandler<UpdateMemberRoleCo
         // Business Rule: Cannot change the Owner's role via this endpoint.
         if (membershipToUpdate.Role == OrganizationRoles.Owner)
         {
-            throw new InvalidOperationException("The organization owner's role cannot be changed here. Use the 'Transfer Ownership' feature.");
+            throw new BadRequestException("The organization owner's role cannot be changed here. Use 'Transfer ownership' instead.");
         }
 
         // Business Rule: An Admin cannot demote another Admin if the current user is not the Owner.
         if (membershipToUpdate.Role == OrganizationRoles.Admin && request.NewRole == OrganizationRoles.Member)
         {
-            var isCurrentUserOwner = await _context.IsOwner(currentUserId.Value, request.OrganizationId, cancellationToken);
-            if (!isCurrentUserOwner)
+            if (actor.Role != OrganizationRoles.Owner)
             {
-                throw new UnauthorizedAccessException("Only the organization owner can demote an admin.");
+                throw new ForbiddenException("Only the organization owner can demote an admin.");
             }
         }
 

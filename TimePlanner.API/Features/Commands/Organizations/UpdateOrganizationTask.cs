@@ -3,6 +3,8 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Commands.Tasks;
+using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -23,12 +25,14 @@ public class UpdateOrganizationTaskCommandValidator : AbstractValidator<UpdateOr
 {
     public UpdateOrganizationTaskCommandValidator()
     {
-        RuleFor(x => x.OrganizationId).NotEmpty();
-        RuleFor(x => x.TaskId).NotEmpty();
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Start).NotEmpty();
-        RuleFor(x => x.Duration).GreaterThan(0);
-        RuleFor(x => x.CategoryId).NotEmpty();
+        RuleFor(x => x.OrganizationId).NotEmpty().WithMessage("Organization is required.");
+        RuleFor(x => x.TaskId).NotEmpty().WithMessage("Task id is required.");
+        RuleFor(x => x.Title).NotEmpty().WithMessage(TaskRules.TitleRequired); // no length limit: Tasks.Title is nvarchar(max)
+        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
+        RuleFor(x => x.Duration)
+            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
+            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
+        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
     }
 }
 
@@ -53,8 +57,9 @@ public class UpdateOrganizationTaskCommandHandler : IRequestHandler<UpdateOrgani
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
+        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
+
         var task = await _context.Tasks
-            .Include(t => t.Assignments)
             .FirstOrDefaultAsync(t => t.Id == request.TaskId && t.OrganizationId == request.OrganizationId, cancellationToken);
 
         if (task == null)
@@ -62,23 +67,26 @@ public class UpdateOrganizationTaskCommandHandler : IRequestHandler<UpdateOrgani
             throw new KeyNotFoundException("Task not found in this organization.");
         }
 
-        // Authorization: User must be an Admin/Owner OR an assignee of the task.
-        var isAssignee = task.Assignments.Any(a => a.AssigneeId == currentUserId);
-        var isAdminOrOwner = await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken);
-
-        if (!isAssignee && !isAdminOrOwner)
+        // Authorization: Admins/Owners, or the member who created the task (for themselves).
+        // A member who was only assigned the task can't change it.
+        if (!TaskCapabilities.For(task.OrganizationId, task.UserId, currentUserId.Value, membership.Role).CanEdit)
         {
-            throw new UnauthorizedAccessException("You do not have permission to edit this task.");
+            throw new ForbiddenException("Only an organization admin or the task's creator can edit this task.");
         }
 
-        // Validate the category belongs to the current user (the editor)
-        var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId && c.UserId == currentUserId, cancellationToken);
-        if (!categoryExists)
+        // Categories are personal. Keeping the task's current category (which may belong to whoever created
+        // the task) is always allowed; choosing a different one requires one of the editor's own categories.
+        if (request.CategoryId != task.CategoryId)
         {
-            throw new ValidationException("The specified category was not found for your user.");
+            var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId && c.UserId == currentUserId, cancellationToken);
+            if (!categoryExists)
+            {
+                throw new ValidationException("The specified category was not found for your user.");
+            }
         }
 
-        // TODO: Overlap check for all assignees.
+        // Organization tasks are not checked against assignees' personal calendars: an admin can't see
+        // those, and the assignee's own planner blocks personal tasks that overlap assigned work.
 
         task.Title = request.Title;
         task.Start = request.Start;
@@ -88,22 +96,8 @@ public class UpdateOrganizationTaskCommandHandler : IRequestHandler<UpdateOrgani
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        var updatedTaskDto = new TaskItemDto
-        {
-            Id = task.Id,
-            Title = task.Title,
-            Start = task.Start,
-            Duration = task.Duration,
-            CategoryId = task.CategoryId,
-            CategoryName = _context.Categories.Find(task.CategoryId)!.Name, // A simple way for now
-            CategoryColor = _context.Categories.Find(task.CategoryId)!.Color,
-            OrganizationId = task.OrganizationId,
-            Assignees = task.Assignments.Select(a => new TaskAssigneeDto
-            {
-                UserId = a.AssigneeId,
-                UserEmail = _context.Users.Find(a.AssigneeId)!.Email!
-            }).ToList()
-        };
+        // One query for the notification payload (capabilities are per viewer, so none are sent).
+        var updatedTaskDto = await TaskProjections.LoadAsync(_context, task.Id, cancellationToken);
 
         await _notificationService.TaskUpdated(request.OrganizationId, updatedTaskDto);
     }

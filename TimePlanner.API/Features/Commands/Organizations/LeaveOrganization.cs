@@ -46,7 +46,7 @@ public class LeaveOrganizationCommandHandler : IRequestHandler<LeaveOrganization
         // Business Rule: The Owner cannot leave the organization. They must transfer ownership first.
         if (membership.Role == OrganizationRoles.Owner)
         {
-            throw new InvalidOperationException("The organization owner cannot leave. You must transfer ownership to another member before you can leave.");
+            throw new ConflictException("The organization owner cannot leave. Transfer ownership to another member before leaving.");
         }
 
         // This is the "soft leave" logic. We preserve the membership record for historical data
