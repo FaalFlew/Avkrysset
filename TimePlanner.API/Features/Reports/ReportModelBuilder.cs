@@ -34,7 +34,7 @@ public sealed class ReportModelBuilder
 {
     public const string ReportTitle = "Analytics report";
     public const string WithoutTemplate = "Without template";
-    public const string DeletedTemplate = "Deleted template";
+    public const string DeletedTemplate = AnalyticsOrder.DeletedTemplateName;
 
     private readonly ApplicationDbContext _context;
     private readonly ILogger<ReportModelBuilder> _logger;
@@ -100,12 +100,13 @@ public sealed class ReportModelBuilder
         var totalHours = rows.Sum(t => t.Duration);
         double ShareOf(double hours) => totalHours > 0 ? hours / totalHours : 0;
 
-        var categories = rows
-            .GroupBy(t => t.CategoryId)
-            .Select(g => new ReportCategory(g.First().CategoryName, g.First().CategoryColor, g.Sum(t => t.Duration), 0))
-            .Select(c => c with { Share = ShareOf(c.Hours) })
-            .OrderByDescending(c => c.Hours)
-            .ThenBy(c => c.Name, StringComparer.Ordinal)
+        // Same order as the analytics API (AnalyticsOrder); the first one is the top category.
+        var categories = AnalyticsOrder.Sort(
+                rows
+                    .GroupBy(t => t.CategoryId)
+                    .Select(g => (Id: g.Key, g.First().CategoryName, g.First().CategoryColor, Hours: g.Sum(t => t.Duration))),
+                c => c.Hours, c => c.CategoryName, c => c.Id)
+            .Select(c => new ReportCategory(c.CategoryName, c.CategoryColor, c.Hours, ShareOf(c.Hours)))
             .ToList();
 
         var activeDays = rows
@@ -179,18 +180,20 @@ public sealed class ReportModelBuilder
     {
         double ShareOf(double hours) => totalHours > 0 ? hours / totalHours : 0;
 
-        var list = rows
-            .Where(t => t.TemplateId.HasValue)
-            .GroupBy(t => t.TemplateId!.Value)
-            .Select(g =>
-            {
-                var hours = g.Sum(t => t.Duration);
-                return templates.TryGetValue(g.Key, out var template)
-                    ? new ReportTemplate(template.Title, template.CategoryName, template.CategoryColor, hours, ShareOf(hours), false)
-                    : new ReportTemplate(DeletedTemplate, null, null, hours, ShareOf(hours), false);
-            })
-            .OrderByDescending(t => t.Hours)
-            .ThenBy(t => t.Name, StringComparer.Ordinal)
+        var list = AnalyticsOrder.Sort(
+                rows
+                    .Where(t => t.TemplateId.HasValue)
+                    .GroupBy(t => t.TemplateId!.Value)
+                    .Select(g =>
+                    {
+                        var hours = g.Sum(t => t.Duration);
+                        var row = templates.TryGetValue(g.Key, out var template)
+                            ? new ReportTemplate(template.Title, template.CategoryName, template.CategoryColor, hours, ShareOf(hours), false)
+                            : new ReportTemplate(DeletedTemplate, null, null, hours, ShareOf(hours), false);
+                        return (Id: g.Key, Row: row);
+                    }),
+                t => t.Row.Hours, t => t.Row.Name, t => t.Id)
+            .Select(t => t.Row)
             .ToList();
 
         // Always present (also when it is 0) so the CSV has a stable shape.

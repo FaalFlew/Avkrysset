@@ -59,32 +59,36 @@ public class GetTaskAnalyticsQueryHandler
 
         var totalHours = tasks.Sum(t => t.Duration);
 
-        var timePerCategory = tasks
-            .GroupBy(t => t.CategoryId)
-            .Select(g => new TimePerCategoryDto
-            {
-                CategoryId = g.Key,
-                CategoryName = g.First().CategoryName,
-                CategoryColor = g.First().CategoryColor,
-                TotalHours = g.Sum(x => x.Duration)
-            }).ToList();
+        var timePerCategory = AnalyticsOrder.Sort(
+            tasks
+                .GroupBy(t => t.CategoryId)
+                .Select(g => new TimePerCategoryDto
+                {
+                    CategoryId = g.Key,
+                    CategoryName = g.First().CategoryName,
+                    CategoryColor = g.First().CategoryColor,
+                    TotalHours = g.Sum(x => x.Duration)
+                }),
+            c => c.TotalHours, c => c.CategoryName, c => c.CategoryId);
 
         var templates = await AnalyticsTaskRows.TemplatesOfAsync(_context, tasks, cancellationToken);
 
-        var timePerTemplate = tasks
-            .Where(t => t.TemplateId.HasValue)
-            .GroupBy(t => t.TemplateId!.Value)
-            .Select(g =>
-            {
-                templates.TryGetValue(g.Key, out var template);
-                return new TimePerTemplateDto
+        var timePerTemplate = AnalyticsOrder.Sort(
+            tasks
+                .Where(t => t.TemplateId.HasValue)
+                .GroupBy(t => t.TemplateId!.Value)
+                .Select(g =>
                 {
-                    TemplateId = g.Key,
-                    TemplateTitle = template?.Title,
-                    CategoryColor = template?.CategoryColor,
-                    TotalHours = g.Sum(x => x.Duration)
-                };
-            }).ToList();
+                    templates.TryGetValue(g.Key, out var template);
+                    return new TimePerTemplateDto
+                    {
+                        TemplateId = g.Key,
+                        TemplateTitle = template?.Title,
+                        CategoryColor = template?.CategoryColor,
+                        TotalHours = g.Sum(x => x.Duration)
+                    };
+                }),
+            t => t.TotalHours, t => t.TemplateTitle ?? AnalyticsOrder.DeletedTemplateName, t => t.TemplateId ?? Guid.Empty);
 
         return new TaskAnalyticsDto
         {
@@ -94,6 +98,29 @@ public class GetTaskAnalyticsQueryHandler
             BreakdownData = TaskAnalyticsBreakdown.Build(tasks, request.ViewType, timeZone)
         };
     }
+}
+
+/// <summary>
+/// The one ordering for category and template lists, shared by the analytics API, reports and the frontend
+/// (which renders the API order): hours descending, then name in ordinal (UTF-16 code unit) order, the same as
+/// JavaScript's <c>&lt;</c> on strings, then the id's lower-case "D" string, also ordinal. Hours are compared at
+/// 6 decimals so floating-point summation noise never decides a tie. The first category is the "top category".
+/// Reports add "Without template" after the sorted templates.
+/// </summary>
+public static class AnalyticsOrder
+{
+    /// <summary>Name used (and sorted by) for templates that were deleted.</summary>
+    public const string DeletedTemplateName = "Deleted template";
+
+    public static List<T> Sort<T>(IEnumerable<T> items, Func<T, double> hours, Func<T, string> name, Func<T, Guid> id) =>
+        items
+            .OrderByDescending(item => HoursKey(hours(item)))
+            .ThenBy(name, StringComparer.Ordinal)
+            .ThenBy(item => id(item).ToString("D"), StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>Hours as compared for ordering (rounded to 6 decimals).</summary>
+    public static double HoursKey(double hours) => double.IsFinite(hours) ? Math.Round(hours, 6) : 0;
 }
 
 /// <summary>A template referenced by analytics rows (soft-deleted templates are not found).</summary>
@@ -284,12 +311,20 @@ public static class TaskAnalyticsBreakdown
         (local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), local.DayOfWeek.ToString());
 
     // The color of the category with the most hours in the bucket.
+    // Ties are broken like the category list (AnalyticsOrder), so the color doesn't depend on row order.
     private static string GetDominantColor(IEnumerable<AnalyticsTaskRow> tasks)
     {
-        var dominant = tasks
-            .GroupBy(t => t.CategoryId)
-            .Select(g => new { TotalDuration = g.Sum(t => t.Duration), g.First().CategoryColor })
-            .OrderByDescending(x => x.TotalDuration)
+        var dominant = AnalyticsOrder.Sort(
+                tasks
+                    .GroupBy(t => t.CategoryId)
+                    .Select(g => new
+                    {
+                        g.Key,
+                        TotalDuration = g.Sum(t => t.Duration),
+                        g.First().CategoryName,
+                        g.First().CategoryColor
+                    }),
+                x => x.TotalDuration, x => x.CategoryName, x => x.Key)
             .FirstOrDefault();
 
         return dominant?.CategoryColor ?? DefaultColor;

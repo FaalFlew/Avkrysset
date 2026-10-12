@@ -109,6 +109,42 @@ public sealed class ReportModelBuilderTests
     }
 
     [Fact]
+    public void Equal_hours_are_ordered_by_ordinal_name_then_id_and_the_first_is_the_top_category()
+    {
+        var org = Guid.Parse("00000000-0000-0000-0000-00000000000a");
+        var acme = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000000");
+        var zeta = Guid.Parse("cccccccc-0000-0000-0000-000000000000");
+        var alpha = Guid.Parse("dddddddd-0000-0000-0000-000000000000");
+        var templates = new Dictionary<Guid, AnalyticsTemplate>
+        {
+            [zeta] = new("Zeta", "Work", "#2F7FE0"),
+            [alpha] = new("alpha", "Work", "#2F7FE0")
+        };
+
+        // Work = 0.1 + 0.1 + 0.1 h (0.30000000000000004 in floating point) ties with the 0.3 h categories.
+        var tasks = new[]
+        {
+            Row("2026-12-28T08:00:00Z", 0.1, template: alpha),
+            Row("2026-12-28T09:00:00Z", 0.1, template: zeta),
+            Row("2026-12-28T10:00:00Z", 0.1),
+            Row("2026-12-28T11:00:00Z", 0.3, acme, "Acme Ops", "#DA6A1C"),
+            AnalyticsTaskRow.ForOrganizationTask(new DateTime(2026, 12, 29, 9, 0, 0, DateTimeKind.Utc), 0.3, org, "Acme Ops"),
+            Row("2026-12-30T10:00:00Z", 0.25, Gym, "acme", "#0E9C8C"),
+            Row("2026-12-30T11:00:00Z", 0.05, Gym, "acme", "#0E9C8C", template: DeletedTemplateId)
+        };
+
+        var model = Build(Request(Weekly, 2026, 53, 53), tasks, templates);
+
+        // Ordinal: "Acme Ops" (same name: ids "0000…" < "bbbb…") < "Work" < "acme" (upper case sorts first).
+        Assert.Equal(new[] { ("Acme Ops", OrganizationPalette.ColorFor(org)), ("Acme Ops", "#DA6A1C"), ("Work", "#2F7FE0"), ("acme", "#0E9C8C") },
+            model.Categories.Select(c => (c.Name, c.Color)));
+        Assert.Equal(OrganizationPalette.ColorFor(org), model.Kpis.TopCategory!.Color);
+        Assert.Equal(new[] { "Zeta", "alpha", "Deleted template", "Without template" }, model.Templates.Select(t => t.Name));
+        // The week's color is the top category's (same tie-break).
+        Assert.Equal(OrganizationPalette.ColorFor(org), Assert.Single(model.Periods).Color);
+    }
+
+    [Fact]
     public void An_empty_range_still_has_every_period_and_the_without_template_row()
     {
         var model = Build(Request(Daily, 2026, 40, 40), Array.Empty<AnalyticsTaskRow>());

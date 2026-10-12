@@ -138,6 +138,37 @@ public sealed class ReportsApiTests
     }
 
     [Fact]
+    public async Task Ties_are_ordered_the_same_by_the_analytics_api_and_the_reports()
+    {
+        // Review repro: an organization's tasks and "Work" both have 2 h in 2026-W53.
+        var org = await OrgTestKit.CreateAsync(_fixture);
+        var member = org.Member;
+        await OrgTestKit.CreateOrgTaskAsync(org.Owner, org.OrgId, "Assigned", "2026-12-28T12:00:00.000Z", 2, member);
+        foreach (var (title, start) in new[] { ("alpha", "2026-12-29T08:00:00.000Z"), ("Zeta", "2026-12-29T10:00:00.000Z") })
+        {
+            var template = await OrgTestKit.ReadJsonAsync(await member.Client.PostAsJsonAsync("/api/tasktemplates",
+                new { title, duration = 1, categoryId = member.CategoryId }), HttpStatusCode.Created);
+            var created = await member.Client.PostAsJsonAsync("/api/tasks/from-template",
+                new { templateId = template.GetProperty("id").GetGuid(), start });
+            Assert.True(created.StatusCode == HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
+        }
+
+        var analytics = await OrgTestKit.ReadJsonAsync(await member.Client.GetAsync(
+            "/api/tasks/analytics?startDate=2026-12-28T00:00:00.000Z&endDate=2027-01-04T00:00:00.000Z&viewType=weekly"), HttpStatusCode.OK);
+        var apiCategories = analytics.GetProperty("timePerCategory").EnumerateArray().Select(c => c.GetProperty("categoryName").GetString()).ToList();
+        var apiTemplates = analytics.GetProperty("timePerTemplate").EnumerateArray().Select(t => t.GetProperty("templateTitle").GetString()).ToList();
+        // Ordinal order: "Org …" < "Work"; "Zeta" < "alpha" (upper case first, like JavaScript's <).
+        Assert.Equal(new[] { org.OrgName, "Work" }, apiCategories);
+        Assert.Equal(new[] { "Zeta", "alpha" }, apiTemplates);
+
+        var lines = Encoding.UTF8.GetString(await (await GetAsync(member,
+            "/api/reports/personal.csv?view=weekly&year=2026&from=53&to=53&locale=en-US")).Content.ReadAsByteArrayAsync()).Split("\r\n");
+        Assert.Contains($"Summary,top_category,Top category,{org.OrgName},2.00,50.0", lines);
+        Assert.Equal(apiCategories, lines.Where(l => l.StartsWith("Category,")).Select(l => l.Split(',')[2]));
+        Assert.Equal(apiTemplates.Append("Without template"), lines.Where(l => l.StartsWith("Template,")).Select(l => l.Split(',')[2]));
+    }
+
+    [Fact]
     public async Task A_csv_download_uses_the_locale_style_and_is_audited()
     {
         var user = await _fixture.CreateUserAsync();
