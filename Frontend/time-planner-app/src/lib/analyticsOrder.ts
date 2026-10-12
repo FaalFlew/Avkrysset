@@ -15,9 +15,19 @@ export interface RankedItem {
   hours: number;
 }
 
-/** Sort comparator: hours descending, then name, then id (both ordinal). */
+/**
+ * Hours as compared for ordering: rounded to 6 decimals (like the server's `AnalyticsOrder.HoursKey`),
+ * so floating-point sums don't break ties — 0.1 + 0.1 + 0.1 must tie with 0.3.
+ */
+export function hoursKey(hours: number): number {
+  return Number.isFinite(hours) ? Math.round(hours * 1e6) / 1e6 : 0;
+}
+
+/** Sort comparator: hours descending (see {@link hoursKey}), then name, then id (both ordinal). */
 export function compareByHoursThenName(a: RankedItem, b: RankedItem): number {
-  if (a.hours !== b.hours) return a.hours > b.hours ? -1 : 1;
+  const ha = hoursKey(a.hours);
+  const hb = hoursKey(b.hours);
+  if (ha !== hb) return ha > hb ? -1 : 1;
   return ordinalCompare(a.name, b.name) || ordinalCompare(a.id, b.id);
 }
 

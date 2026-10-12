@@ -1,6 +1,6 @@
 /** The ordering shared with the server: hours DESC, then name, then id — both ordinal. */
 import { describe, expect, it } from "vitest";
-import { compareByHoursThenName, ordinalCompare, rankByHours } from "../analyticsOrder";
+import { compareByHoursThenName, hoursKey, ordinalCompare, rankByHours } from "../analyticsOrder";
 
 describe("ordinalCompare", () => {
   it("compares UTF-16 code units, not locale collation", () => {
@@ -44,5 +44,23 @@ describe("rankByHours", () => {
     expect(rankByHours([...items].reverse()).map((r) => r.id)).toEqual(["a", "b"]);
     expect(items).toEqual(copy);
     expect(compareByHoursThenName(items[0]!, items[0]!)).toBe(0);
+  });
+});
+
+describe("hoursKey (matches the server's AnalyticsOrder.HoursKey)", () => {
+  it("treats floating-point sums as ties, so the name decides", () => {
+    const sum = 0.1 + 0.1 + 0.1; // 0.30000000000000004
+    expect(sum).not.toBe(0.3);
+    expect(hoursKey(sum)).toBe(hoursKey(0.3));
+    const ranked = rankByHours([
+      { id: "b", name: "Beta", hours: sum },
+      { id: "a", name: "Alpha", hours: 0.3 },
+    ]);
+    expect(ranked.map((r) => r.name)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("maps non-finite hours to 0", () => {
+    expect(hoursKey(Number.NaN)).toBe(0);
+    expect(hoursKey(Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
