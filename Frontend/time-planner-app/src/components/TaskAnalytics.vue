@@ -6,6 +6,7 @@ import { UiButton, UiEmptyState, UiErrorState, UiPageHeader } from "@/components
 import { useStats, type AnalyticsView } from "@/composables/useStats";
 import {
   analyticsBuckets,
+  analyticsRange,
   defaultAnalyticsPeriod,
   defaultDailyWeek,
   type AnalyticsSelection,
@@ -127,6 +128,7 @@ const scopeLabel = computed(() => selectionShortLabel(shownSelection.value));
 const shownRangeLabel = computed(() =>
   selectionSummary(shownSelection.value, analyticsBuckets(shownSelection.value).length)
 );
+const shownRange = computed(() => analyticsRange(shownSelection.value));
 
 type PageState = "error" | "loading" | "first-run" | "empty" | "ready";
 const state = computed<PageState>(() => {
@@ -165,9 +167,9 @@ const liveMessage = computed(() => {
 
 <template>
   <div class="analytics-page print-report">
-    <PrintReportHeader :range-label="shownRangeLabel" />
+    <PrintReportHeader :range-label="shownRangeLabel" :range="shownRange" />
 
-    <UiPageHeader title="Analytics" :subtitle="subtitle" data-print-hide>
+    <UiPageHeader class="analytics-header" title="Analytics" :subtitle="subtitle" data-print-hide>
       <template #actions>
         <ExportMenu
           :selection="currentSelection"
@@ -285,6 +287,17 @@ const liveMessage = computed(() => {
   max-width: var(--content-max);
   margin: 0 auto;
   padding: var(--space-6) var(--space-8) var(--space-10);
+}
+
+/*
+ * The Export block may shrink to the header row's width (its busy state wraps inside it instead of
+ * pushing the page sideways on phones) and stays right-aligned when it wraps under the title.
+ */
+.analytics-header :deep(.ui-page-header__actions) {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
 
 .analytics-body {

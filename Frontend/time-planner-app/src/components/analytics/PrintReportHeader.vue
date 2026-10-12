@@ -5,16 +5,18 @@
  * print mode was entered, see usePrintMode).
  * Props:
  *   rangeLabel: string — e.g. "Weeks 1–53 · Dec 29, 2025 – Jan 3, 2027"
+ *   range: InstantRange — the range shown; the zone label lists every UTC offset in force during
+ *     it, like the server's report: "Europe/Oslo (UTC+01:00/+02:00)"
  */
 import { computed } from "vue";
 import { AppLogo } from "@/components/ui";
-import { formatDateTime, formatTimeZoneLabel } from "@/lib/datetime";
+import { formatDateTime, formatZoneLabelForRange, type InstantRange } from "@/lib/datetime";
 import { printState } from "@/composables/usePrintMode";
 
-defineProps<{ rangeLabel: string }>();
+const props = defineProps<{ rangeLabel: string; range: InstantRange }>();
 
 const generatedAt = computed(() => formatDateTime(printState.printedAt));
-const zoneLabel = computed(() => formatTimeZoneLabel(printState.printedAt));
+const zoneLabel = computed(() => formatZoneLabelForRange(props.range));
 </script>
 
 <template>

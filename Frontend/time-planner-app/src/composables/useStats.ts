@@ -26,6 +26,7 @@ import {
   type AnalyticsView,
 } from "@/lib/analyticsBuckets";
 import { fullBucketLabel, shortBucketLabel } from "@/components/analytics/format";
+import { compareByHoursThenName } from "@/lib/analyticsOrder";
 
 export type { AnalyticsSelection, AnalyticsView };
 
@@ -66,7 +67,7 @@ export interface TemplateRow {
   share: number;
   /** The template no longer exists (tasks keep their link to it). */
   deleted: boolean;
-  /** Name of the template's category, when known (guest data). */
+  /** Name of the template's category, when known (guest data; null for deleted templates). */
   categoryName: string | null;
 }
 
@@ -134,7 +135,8 @@ function selectionOf(filters: StatsFilters): AnalyticsSelection {
   };
 }
 
-const byHoursDesc = <T extends { hours: number }>(a: T, b: T) => b.hours - a.hours;
+/** Hours DESC, then name, then id (ordinal) — the order shared with the server. */
+const byHoursDesc = compareByHoursThenName;
 const share = (hours: number, total: number) => (total > 0 ? hours / total : 0);
 
 function errorMessage(error: unknown): string {
@@ -272,7 +274,8 @@ export function useStats() {
           hours,
           share: share(hours, totalHours),
           deleted: !template,
-          categoryName: category?.name ?? template?.categoryName ?? null,
+          // Like the server: a deleted template has no category in the breakdown.
+          categoryName: template ? (category?.name ?? template.categoryName ?? null) : null,
         };
       })
       .sort(byHoursDesc);

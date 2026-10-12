@@ -14,8 +14,10 @@
 //       Period   one row per bucket, zero-filled; keys yyyy-MM / yyyy-Www / yyyy-MM-dd; labels
 //                "October 2026" / "Week 40" / "Monday, October 5, 2026" (locale dates)
 //       Category Label and Category = the category name (no key)
-//       Template Category = the template's category when known (no key); the "Without template"
-//                row (key without_template) is always present, last
+//       Template Category = the template's category when known, empty for deleted templates (no
+//                key); the "Without template" row (key without_template) is always present, last
+//     Categories and templates are ordered by hours DESC, then name, then id — ordinal comparison
+//     (src/lib/analyticsOrder.ts, same rule as the server); top_category is the first category.
 //   - Hours with 2 decimals, Share % with 1 decimal (share of the range total).
 //   - Formula-injection guard: text cells starting with = + - @ or tab get a leading '.
 // The server's writer is TimePlanner.API/Features/Reports/CsvReportWriter.cs — keep them in sync.
@@ -23,6 +25,7 @@
 import type { AnalyticsSnapshot } from "@/composables/useStats";
 import type { AnalyticsView } from "@/lib/analyticsBuckets";
 import { formatDate, formatMonthYear, isDateKey } from "@/lib/datetime";
+import { rankByHours } from "@/lib/analyticsOrder";
 
 export const CSV_BOM = "﻿";
 export const CSV_EOL = "\r\n";
@@ -82,11 +85,15 @@ export interface CsvPeriodRow {
 }
 
 export interface CsvCategoryRow {
+  /** Only used for ordering (not written). */
+  id: string;
   name: string;
   hours: number;
 }
 
 export interface CsvTemplateRow {
+  /** Only used for ordering (not written). */
+  id: string;
   name: string;
   category: string | null;
   hours: number;
@@ -104,7 +111,7 @@ export interface AnalyticsCsvInput {
   taskCount: number | null;
   activeDays: number | null;
   periods: CsvPeriodRow[];
-  /** Largest first; the first one is the top category. */
+  /** Any order: written hours DESC, then name, then id (ordinal); the first is the top category. */
   categories: CsvCategoryRow[];
   templates: CsvTemplateRow[];
   withoutTemplateHours: number;
@@ -140,7 +147,9 @@ export function buildAnalyticsCsv(input: AnalyticsCsvInput, format: CsvNumberFor
   row(CSV_HEADER.map((h) => text(h)));
 
   // Summary
-  const top = input.categories.find((c) => c.hours > 0) ?? null;
+  const categories = rankByHours(input.categories);
+  const templates = rankByHours(input.templates);
+  const top = categories.find((c) => c.hours > 0) ?? null;
   const activeDays = input.activeDays;
   row([text("Summary"), text("total_hours"), text("Total hours"), null, hours(total), null]);
   row([text("Summary"), text("task_count"), text("Tasks"), null, count(input.taskCount), null]);
@@ -165,10 +174,10 @@ export function buildAnalyticsCsv(input: AnalyticsCsvInput, format: CsvNumberFor
   for (const p of input.periods) {
     row([text("Period"), text(p.key), text(p.label), null, hours(p.hours), share(p.hours)]);
   }
-  for (const c of input.categories) {
+  for (const c of categories) {
     row([text("Category"), null, text(c.name), text(c.name), hours(c.hours), share(c.hours)]);
   }
-  for (const t of input.templates) {
+  for (const t of templates) {
     row([text("Template"), null, text(t.name), t.category ? text(t.category) : null, hours(t.hours), share(t.hours)]);
   }
   row([
@@ -220,10 +229,10 @@ export function analyticsCsvInputFromSnapshot(snapshot: AnalyticsSnapshot, meta:
     })),
     categories: snapshot.categories
       .filter((c) => c.hours > 0)
-      .map((c) => ({ name: c.name, hours: c.hours })),
+      .map((c) => ({ id: c.id, name: c.name, hours: c.hours })),
     templates: snapshot.templates
       .filter((t) => t.hours > 0)
-      .map((t) => ({ name: t.name, category: t.categoryName, hours: t.hours })),
+      .map((t) => ({ id: t.id, name: t.name, category: t.deleted ? null : t.categoryName, hours: t.hours })),
     withoutTemplateHours: snapshot.untemplatedHours,
   };
 }

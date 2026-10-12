@@ -33,10 +33,10 @@ function input(patch: Partial<AnalyticsCsvInput> = {}): AnalyticsCsvInput {
       { key: "2026-09-30", label: "Wednesday, September 30, 2026", hours: 4.5 },
     ],
     categories: [
-      { name: "Work", hours: 8 },
-      { name: "Health", hours: 4.5 },
+      { id: "c1", name: "Work", hours: 8 },
+      { id: "c2", name: "Health", hours: 4.5 },
     ],
-    templates: [{ name: "Morning run", category: "Health", hours: 1.25 }],
+    templates: [{ id: "t1", name: "Morning run", category: "Health", hours: 1.25 }],
     withoutTemplateHours: 11.25,
     ...patch,
   };
@@ -153,10 +153,10 @@ describe("buildAnalyticsCsv", () => {
     const csv = buildAnalyticsCsv(
       input({
         categories: [
-          { name: '=HYPERLINK("http://x","click")', hours: 8 },
-          { name: "Kids, school; homework", hours: 4.5 },
+          { id: "c1", name: '=HYPERLINK("http://x","click")', hours: 8 },
+          { id: "c2", name: "Kids, school; homework", hours: 4.5 },
         ],
-        templates: [{ name: "@team\nsync", category: "-1", hours: 1 }],
+        templates: [{ id: "t1", name: "@team\nsync", category: "-1", hours: 1 }],
       }),
       EN
     );
@@ -165,6 +165,45 @@ describe("buildAnalyticsCsv", () => {
     expect(csv).toContain("Template,,\"'@team\nsync\",'-1,1.00,8.0\r\n");
     // the top category row is guarded too
     expect(csv).toContain('Summary,top_category,Top category,"\'=HYPERLINK(""http://x"",""click"")",8.00,64.0\r\n');
+  });
+
+  it("orders categories and templates: hours DESC, then name (ordinal), then id", () => {
+    const rows = lines(
+      buildAnalyticsCsv(
+        input({
+          totalHours: 10,
+          categories: [
+            { id: "c3", name: "beta", hours: 2 },
+            { id: "c2", name: "Zeta", hours: 2 }, // ordinal: "Z" (0x5A) < "b" (0x62), unlike localeCompare
+            { id: "c9", name: "Alpha", hours: 2 },
+            { id: "c1", name: "Alpha", hours: 2 }, // identical names → the id decides
+            { id: "c0", name: "Big", hours: 2 },
+          ],
+          templates: [
+            { id: "t2", name: "Standup", category: "Work", hours: 1 },
+            { id: "t1", name: "Deleted template", category: null, hours: 1 },
+            { id: "t3", name: "Review", category: "Work", hours: 3 },
+          ],
+          withoutTemplateHours: 5,
+        }),
+        EN
+      )
+    );
+    expect(rows.filter((l) => l.startsWith("Category,")).map((l) => l.split(",")[2])).toEqual([
+      "Alpha", // c1
+      "Alpha", // c9
+      "Big",
+      "Zeta",
+      "beta",
+    ]);
+    // the top category is the first one after the tie-break
+    expect(rows).toContain("Summary,top_category,Top category,Alpha,2.00,20.0");
+    expect(rows.filter((l) => l.startsWith("Template,"))).toEqual([
+      "Template,,Review,Work,3.00,30.0",
+      "Template,,Deleted template,,1.00,10.0",
+      "Template,,Standup,Work,1.00,10.0",
+      "Template,without_template,Without template,,5.00,50.0", // always last, even when largest
+    ]);
   });
 
   it("adds the document ID row only when given (server exports)", () => {
@@ -218,6 +257,8 @@ describe(`CSV from the analytics snapshot (${TEST_ZONE})`, () => {
       ],
       templates: [
         { id: "t1", name: "Deep work", color: "#2F7FE0", hours: 2, share: 2 / total, deleted: false, categoryName: "Work" },
+        // a deleted template has no category in the CSV, like the server's
+        { id: "t0", name: "Deleted template", color: null, hours: 0.25, share: 0.25 / total, deleted: true, categoryName: "Work" },
       ],
       untemplatedHours: total - 2,
       totalHours: total,
@@ -249,7 +290,7 @@ describe(`CSV from the analytics snapshot (${TEST_ZONE})`, () => {
     );
     // zero-hour categories are left out; templates carry their category
     expect(csv).not.toContain("Unused");
-    expect(csv).toContain("Template,,Deep work,Work,2.00,42.1\r\n");
+    expect(csv).toContain("Template,,Deep work,Work,2.00,42.1\r\nTemplate,,Deleted template,,0.25,5.3\r\n");
     expect(csv).toContain("Category,,Work,Work,4.75,100.0\r\n");
     expect(csv).toContain("Template,without_template,Without template,,2.75,57.9\r\n");
     expect(csv).toContain("Summary,task_count,Tasks,,3,\r\n");

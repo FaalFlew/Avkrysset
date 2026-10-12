@@ -430,6 +430,36 @@ export function formatTimeZoneLabel(at: InstantInput = now()): string {
   return `${formatUtcOffset(at)} · ${zone}`;
 }
 
+/** `"+02:00"`, `"-03:30"`, `"+05:45"` for an offset in minutes. */
+function offsetText(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  return `${sign}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`;
+}
+
+/**
+ * Distinct UTC offsets (minutes, ascending) of the active zone in force during the half-open
+ * `range`: sampled every 12 hours plus the last instant, like the server's report label.
+ */
+export function utcOffsetsWithin(range: InstantRange): number[] {
+  const start = toEpochMs(range.start);
+  const end = toEpochMs(range.end);
+  const offsets = new Set<number>();
+  for (let t = start; t < end; t += 12 * HOUR_MS) offsets.add(getUtcOffsetMinutes(t));
+  offsets.add(getUtcOffsetMinutes(end > start ? end - 1 : start));
+  return [...offsets].sort((a, b) => a - b);
+}
+
+/**
+ * The active zone for a report range, in the server's format: `"Europe/Oslo (UTC+02:00)"`;
+ * `"Europe/Oslo (UTC+01:00/+02:00)"` when the offset changes within the range (DST); `"UTC"`.
+ */
+export function formatZoneLabelForRange(range: InstantRange): string {
+  const zone = getActiveTimeZone();
+  const offsets = utcOffsetsWithin(range);
+  if (offsets.length === 1 && offsets[0] === 0 && (zone === "UTC" || zone === "Etc/UTC")) return "UTC";
+  return `${zone} (UTC${offsets.map(offsetText).join("/")})`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Parsing and serialization
 // ---------------------------------------------------------------------------------------------

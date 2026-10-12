@@ -22,8 +22,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { useAnalyticsExport } from "@/composables/useAnalyticsExport";
 import { printReport } from "@/composables/usePrintMode";
 import type { AnalyticsSnapshot } from "@/composables/useStats";
-import type { AnalyticsSelection } from "@/lib/analyticsBuckets";
-import { formatDateTime, formatTimeZoneLabel, now } from "@/lib/datetime";
+import { analyticsRange, type AnalyticsSelection } from "@/lib/analyticsBuckets";
+import { formatDateTime, formatZoneLabelForRange, now } from "@/lib/datetime";
 import { formatLabel } from "@/lib/exportErrors";
 import { usePaperPreference, type PaperSize } from "@/lib/paper";
 
@@ -79,7 +79,7 @@ function exportGuestCsv(): void {
   const at = now();
   exporter.downloadGuestCsv(props.snapshot, {
     rangeLabel: props.rangeLabel,
-    timeZoneLabel: formatTimeZoneLabel(at),
+    timeZoneLabel: formatZoneLabelForRange(analyticsRange(props.snapshot.selection)),
     generatedAt: formatDateTime(at),
   });
 }
@@ -152,12 +152,10 @@ function cancelExport(): void {
 </script>
 
 <template>
-  <div ref="rootRef" class="export-menu" data-print-hide>
+  <!-- row-reverse + wrap: the trigger stays right; the slow-server hint sits beside it when there
+       is room and wraps BELOW it on narrow screens (it never widens the header). -->
+  <div ref="rootRef" class="export-menu" :class="{ 'is-slow': busy && slow }" data-print-hide>
     <p class="sr-only" role="status" aria-live="polite">{{ liveText }}</p>
-    <div v-if="busy && slow" class="export-menu__slow">
-      <p class="export-menu__hint">{{ SLOW_HINT }}</p>
-      <UiButton variant="ghost" size="sm" @click="cancelExport">Cancel</UiButton>
-    </div>
     <UiMenu :items="items" placement="bottom-end">
       <template #trigger="{ toggle, triggerProps }">
         <UiButton
@@ -173,27 +171,45 @@ function cancelExport(): void {
         </UiButton>
       </template>
     </UiMenu>
+    <div v-if="busy && slow" class="export-menu__slow">
+      <p class="export-menu__hint">{{ SLOW_HINT }}</p>
+      <UiButton variant="ghost" class="export-menu__cancel" aria-label="Cancel export" @click="cancelExport">
+        Cancel
+      </UiButton>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * Never wider than the header row: the page header lets this block shrink (TaskAnalytics), and
+ * `row-reverse` + `wrap` keep the trigger on the right with the hint + Cancel beside it, or on
+ * the next line when they don't fit. The hint text wraps; Cancel never shrinks.
+ */
 .export-menu {
   display: flex;
+  flex-direction: row-reverse;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
+  justify-content: flex-start;
+  gap: var(--space-1) var(--space-2);
   min-width: 0;
+  max-width: 100%;
 }
 
 .export-menu__slow {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
   min-width: 0;
+  max-width: 100%;
 }
 
 .export-menu__hint {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 34ch;
   font-size: var(--fs-12);
   line-height: var(--lh-12);
@@ -201,15 +217,17 @@ function cancelExport(): void {
   text-align: end;
 }
 
+.export-menu__cancel {
+  flex-shrink: 0;
+}
+
 .export-menu__chevron {
   color: var(--text-tertiary);
 }
 
 @media (max-width: 767.98px) {
-  .export-menu__slow {
-    order: 2;
-    flex-basis: 100%;
-    justify-content: flex-end;
+  .export-menu__cancel {
+    min-height: 44px;
   }
 }
 </style>
