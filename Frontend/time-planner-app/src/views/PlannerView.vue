@@ -37,6 +37,7 @@ const today = useToday();
 
 const weekView = ref<InstanceType<typeof WeekView> | null>(null);
 const header = ref<InstanceType<typeof PlannerHeader> | null>(null);
+const weekStrip = ref<InstanceType<typeof WeekStrip> | null>(null);
 
 /** 7 days on ≥ 768px; the selected day on phones. */
 const visibleDays = computed<DateKey[]>(() => (isMobile.value ? [currentDate.value] : currentWeek.value));
@@ -55,7 +56,11 @@ function goPrev(): void {
 }
 function goToday(): void {
   goToToday();
-  void nextTick(() => weekView.value?.scrollToNow(true));
+  void nextTick(() => {
+    weekView.value?.scrollToNow(true);
+    // Today may already be selected while the phone strip is scrolled to another week.
+    weekStrip.value?.revealSelected();
+  });
 }
 
 // Auto-scroll when the week changes (not when switching days inside a week on phones).
@@ -162,13 +167,11 @@ const showOnboarding = computed(
     />
     <WeekStrip
       v-if="isMobile"
-      :days="currentWeek"
+      ref="weekStrip"
       :selected="currentDate"
       :today="today"
       :busy-days="weekTaskDays"
       @select="selectDate"
-      @prev="previousWeek"
-      @next="nextWeek"
     />
     <UiLoadingBar :active="isBusy" class="planner__loading" />
     <p v-if="isBusy" class="sr-only" role="status">Loading tasks…</p>

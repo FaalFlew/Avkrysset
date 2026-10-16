@@ -22,7 +22,7 @@ import {
   weekScrollLeft,
   windowContains,
   type StripWindow,
-} from "../weekStrip";
+} from "../dayStrip";
 import { addDays, diffCalendarDays, formatDate, isoWeekday } from "@/lib/datetime";
 import { formatWeekdayMicro } from "@/lib/plannerFormat";
 import { assertZoneApplied, TEST_ZONE } from "@/lib/__tests__/tz";

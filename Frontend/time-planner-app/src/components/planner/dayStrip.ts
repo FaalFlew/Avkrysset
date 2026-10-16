@@ -1,4 +1,4 @@
-// src/components/planner/weekStrip.ts — pure logic of the phone day strip (WeekStrip.vue).
+// src/components/planner/dayStrip.ts — pure logic of the phone day strip (WeekStrip.vue).
 // No DOM: the component feeds it the scroll position and the week width and acts on the results.
 //
 // Model:
@@ -129,7 +129,7 @@ export function shownWeekIndex(scrollLeft: number, weekWidth: number, weeks: num
 }
 
 export interface Recentring {
-  win: StripWindow;
+  window: StripWindow;
   /** Index of the shown week in the new window. */
   shownIndex: number;
 }
