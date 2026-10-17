@@ -2,7 +2,7 @@
 <script setup lang="ts">
 /**
  * Planner page: header (Today / ‹ › / month picker / week badge / time zone), the week grid
- * (a single day with a week strip on phones), loading/error/empty states and first-run help.
+ * (a single day with a scrollable day strip on phones), loading/error states and first-run help.
  * Shortcuts here: T today, J/→ next, K/← previous (week; day on phones), D week picker.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -21,7 +21,7 @@ import { useBreakpoint } from "@/composables/useMediaQuery";
 import { useToday } from "@/composables/useClock";
 import { useTaskEditor } from "@/composables/useTaskEditor";
 import { useHotkeyScope, isNeutralTarget } from "@/composables/useHotkeys";
-import { formatWeekdayLong, toDateKey, type DateKey } from "@/lib/datetime";
+import { toDateKey, type DateKey } from "@/lib/datetime";
 
 const ONBOARDING_KEY = "tp-onboarding-dismissed";
 const SLOW_LOADING_MS = 2500;
@@ -37,6 +37,7 @@ const today = useToday();
 
 const weekView = ref<InstanceType<typeof WeekView> | null>(null);
 const header = ref<InstanceType<typeof PlannerHeader> | null>(null);
+const weekStrip = ref<InstanceType<typeof WeekStrip> | null>(null);
 
 /** 7 days on ≥ 768px; the selected day on phones. */
 const visibleDays = computed<DateKey[]>(() => (isMobile.value ? [currentDate.value] : currentWeek.value));
@@ -55,7 +56,11 @@ function goPrev(): void {
 }
 function goToday(): void {
   goToToday();
-  void nextTick(() => weekView.value?.scrollToNow(true));
+  void nextTick(() => {
+    weekView.value?.scrollToNow(true);
+    // Today may already be selected while the phone strip is scrolled to another week.
+    weekStrip.value?.revealSelected();
+  });
 }
 
 // Auto-scroll when the week changes (not when switching days inside a week on phones).
@@ -85,8 +90,6 @@ useHotkeyScope({
 
 // ------------------------------------------------------------------ states
 const isBusy = computed(() => isLoadingWeek.value || isInitializing.value);
-/** A task drag is running (hide the empty-week pill next to the edge cue). */
-const isDragging = ref(false);
 const showSlowHint = ref(false);
 let slowTimer: number | undefined;
 watch(
@@ -111,10 +114,6 @@ async function retry(): Promise<void> {
   }
 }
 
-const visibleTaskCount = computed(() => {
-  const days = new Set(visibleDays.value);
-  return tasks.value.filter((t) => days.has(toDateKey(t.start))).length;
-});
 const weekTaskDays = computed(() => {
   const set = new Set<DateKey>();
   const range = { start: currentWeek.value[0]!, end: currentWeek.value[6]! };
@@ -152,21 +151,6 @@ const showOnboarding = computed(
     categories.value.length <= 1 &&
     weekIsEmpty.value
 );
-
-const showEmptyPill = computed(
-  () =>
-    !isBusy.value &&
-    !errorMessage.value &&
-    !showOnboarding.value &&
-    !isDragging.value &&
-    visibleTaskCount.value === 0 &&
-    !editor.state.open
-);
-const emptyText = computed(() =>
-  isMobile.value
-    ? `Nothing planned for ${formatWeekdayLong(currentDate.value)} · Tap a time to add a task`
-    : "Nothing planned this week · Click a time slot or press N to add a task"
-);
 </script>
 
 <template>
@@ -183,13 +167,11 @@ const emptyText = computed(() =>
     />
     <WeekStrip
       v-if="isMobile"
-      :days="currentWeek"
+      ref="weekStrip"
       :selected="currentDate"
       :today="today"
       :busy-days="weekTaskDays"
       @select="selectDate"
-      @prev="previousWeek"
-      @next="nextWeek"
     />
     <UiLoadingBar :active="isBusy" class="planner__loading" />
     <p v-if="isBusy" class="sr-only" role="status">Loading tasks…</p>
@@ -210,7 +192,6 @@ const emptyText = computed(() =>
           :busy="isBusy"
           @navigate="selectDate"
           @advance="(side) => (side > 0 ? goNext() : goPrev())"
-          @dragging="(active) => (isDragging = active)"
         />
 
         <div class="planner__overlay" aria-live="polite">
@@ -223,7 +204,6 @@ const emptyText = computed(() =>
             </UiButton>
           </div>
           <p v-else-if="isBusy && showSlowHint" class="pill">Waking up the server… this can take a few seconds.</p>
-          <p v-else-if="showEmptyPill" class="pill">{{ emptyText }}</p>
         </div>
 
         <PlannerOnboarding
