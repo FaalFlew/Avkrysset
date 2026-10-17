@@ -216,13 +216,16 @@ public sealed class ReportsApiTests
         return (response, bytes, Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3).Split("\r\n"));
     }
 
-    /// <summary>"yyyy-MM-dd HH:mm" in Oslo of each task's CreatedOnUtc, by title.</summary>
-    private async Task<Dictionary<string, string>> CreatedAtInOsloAsync(params string[] titles)
+    /// <summary>"yyyy-MM-dd HH:mm" in Oslo of CreatedOnUtc of the user's personal tasks and the organization's tasks, by title.</summary>
+    private async Task<Dictionary<string, string>> CreatedAtInOsloAsync(Guid userId, Guid organizationId, params string[] titles)
     {
         using var scope = _fixture.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var oslo = TimeZoneResolver.ResolveOrUtc("Europe/Oslo");
-        return (await db.Tasks.AsNoTracking().Where(t => titles.Contains(t.Title)).ToListAsync())
+        return (await db.Tasks.AsNoTracking()
+                .Where(t => titles.Contains(t.Title)
+                            && ((t.OrganizationId == null && t.UserId == userId) || t.OrganizationId == organizationId))
+                .ToListAsync())
             .ToDictionary(t => t.Title, t => TimeZoneInfo.ConvertTimeFromUtc(t.CreatedOnUtc, oslo).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
     }
 
@@ -261,7 +264,7 @@ public sealed class ReportsApiTests
         Assert.Contains("X-Document-Id", exposed);
         Assert.Contains("Retry-After", exposed);
 
-        var createdAt = await CreatedAtInOsloAsync("Gym", "Assigned to member", "Member's own org task");
+        var createdAt = await CreatedAtInOsloAsync(member.Id, org.OrgId, "Gym", "Assigned to member", "Member's own org task");
         var assignees = string.Join(", ", new[] { member.Email, org.Admin.Email }.Order(StringComparer.Ordinal));
         Assert.Equal(new[]
         {
