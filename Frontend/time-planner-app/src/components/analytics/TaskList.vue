@@ -70,9 +70,12 @@ const remaining = computed(() => matching.value.length - shownCount.value);
 const showOrganization = computed(() => props.rows.some((row) => !!row.organizationName));
 const chips = computed(() => taskListCategories(props.rows));
 
+const pageAnnouncement = ref("");
+
 // A new range or filter starts at the first page again (edits keep the expanded list).
 watch([() => props.scopeLabel, query, () => props.category], () => {
   limit.value = TASK_LIST_PAGE_SIZE;
+  pageAnnouncement.value = "";
 });
 
 type State = "loading" | "error" | "empty" | "no-match" | "ready";
@@ -120,7 +123,6 @@ function clearFilters(): void {
   emit("update:category", null);
 }
 
-const pageAnnouncement = ref("");
 async function showMore(): Promise<void> {
   const firstNew = shownCount.value;
   limit.value += TASK_LIST_PAGE_SIZE;
