@@ -2,7 +2,10 @@
 import { describe, expect, it } from "vitest";
 import type { AnalyticsSelection } from "../analyticsBuckets";
 import {
+  exportUrl,
   personalReportUrl,
+  personalTaskListCsvUrl,
+  TASKS_FILE_PREFIX,
   reportFileStem,
   reportQuery,
   reportQueryString,
@@ -107,6 +110,16 @@ describe("report query string and URL", () => {
     );
   });
 
+  it("builds the task list CSV URL (no paper) and picks the URL per export kind", () => {
+    const query = reportQuery(sel({ view: "weekly", weekRange: { start: 40, end: 42 } }), "A4", "nb-NO");
+    expect(personalTaskListCsvUrl(query, "nb-NO")).toBe(
+      "/reports/personal.tasks.csv?view=weekly&year=2026&from=40&to=42&locale=nb-NO"
+    );
+    expect(exportUrl("tasks-csv", query)).toBe(personalTaskListCsvUrl(query, "nb-NO"));
+    expect(exportUrl("pdf", query)).toBe(personalReportUrl("pdf", query));
+    expect(exportUrl("csv", query)).toBe(personalReportUrl("csv", query));
+  });
+
   it("encodes unusual locale tags", () => {
     const query = reportQuery(sel({ view: "daily", year: 2025, dailyWeek: 1 }), "A4", "sr-Latn-RS-u-nu-latn");
     expect(personalReportUrl("pdf", query)).toBe(
@@ -128,5 +141,13 @@ describe(`report file stem (${TEST_ZONE})`, () => {
     );
     expect(reportFileStem(sel({ view: "daily", dailyWeek: 40 }))).toBe("time-planner-analytics-2026-W40");
     expect(reportFileStem(sel({ view: "daily", year: 2025, dailyWeek: 1 }))).toBe("time-planner-analytics-2025-W01");
+  });
+
+  it("names the task list like the server: time-planner-tasks-…", () => {
+    expect(reportFileStem(sel({ view: "weekly", weekRange: { start: 40, end: 40 } }), TASKS_FILE_PREFIX)).toBe(
+      "time-planner-tasks-2026-W40"
+    );
+    expect(reportFileStem(sel({ view: "monthly" }), TASKS_FILE_PREFIX)).toBe("time-planner-tasks-2026-01_2026-12");
+    expect(reportFileStem(sel({ view: "daily", dailyWeek: 43 }), TASKS_FILE_PREFIX)).toBe("time-planner-tasks-2026-W43");
   });
 });

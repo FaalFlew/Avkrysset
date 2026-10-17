@@ -55,7 +55,7 @@ export interface TaskListRow {
   /** "You", or the creator's display name. */
   createdBy: string;
   createdByMe: boolean;
-  /** Assignee display names (org tasks), in the server's order. */
+  /** Assignee display names (org tasks), ordinal order (like the server's task CSV). */
   assigneeNames: string[];
 }
 
@@ -117,7 +117,10 @@ export function toTaskListRow(task: Task, ctx: TaskListContext): TaskListRow {
     organizationName: org ? task.organizationName?.trim() || "Organization" : null,
     createdBy: createdByMe ? CREATED_BY_YOU : task.createdBy?.displayName?.trim() || "—",
     createdByMe,
-    assigneeNames: (task.assignees ?? []).map((a) => a.displayName || a.email).filter(Boolean),
+    assigneeNames: (task.assignees ?? [])
+      .map((a) => a.displayName || a.email)
+      .filter(Boolean)
+      .sort(ordinalCompare),
   };
 }
 

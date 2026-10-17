@@ -125,14 +125,9 @@ async function showMore(): Promise<void> {
   const firstNew = shownCount.value;
   limit.value += TASK_LIST_PAGE_SIZE;
   pageAnnouncement.value = `Showing ${shownCount.value} of ${pluralize(matching.value.length, "task")}`;
-  // Keep keyboard users in place: focus the first newly shown task.
+  // Keep keyboard users in place: focus the first newly shown task (rows render in list order).
   await nextTick();
-  const row = matching.value[firstNew];
-  if (row) {
-    root.value
-      ?.querySelector<HTMLButtonElement>(`[data-task-id="${CSS.escape(row.id)}"] .title-button`)
-      ?.focus({ preventScroll: false });
-  }
+  root.value?.querySelectorAll?.<HTMLButtonElement>(".task-row .title-button")[firstNew]?.focus();
 }
 
 const cardRef = ref<InstanceType<typeof UiCard> | null>(null);

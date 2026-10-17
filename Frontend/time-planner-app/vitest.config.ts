@@ -28,6 +28,12 @@ export const TEST_TIME_ZONES = [
 ] as const;
 
 const ARCHITECTURE_SPEC = "src/**/architecture.spec.ts";
+/**
+ * Component specs that mount with the in-memory renderer (src/components/analytics/__tests__/
+ * fakeRenderer.ts) need client-compiled .vue files; everything else keeps the SSR transform
+ * (renderToString).
+ */
+const WEB_TRANSFORM_SPECS = ["**/src/**/*.web.spec.ts"];
 
 export default mergeConfig(
   viteConfig,
@@ -37,6 +43,7 @@ export default mergeConfig(
       pool: "forks",
       // The property specs sweep every 15-minute slot of a year; 13 zones run in parallel.
       testTimeout: 30_000,
+      testTransformMode: { web: WEB_TRANSFORM_SPECS },
       projects: [
         {
           extends: true,
