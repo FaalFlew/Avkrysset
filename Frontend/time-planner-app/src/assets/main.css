@@ -1,0 +1,15 @@
+/*
+ * src/assets/main.css — app root sizing.
+ *
+ * The legacy compat layer (.btn-*, .form-group, --primary-color & co.) was removed in the final
+ * cleanup (UI_PLAN §8) once no screen used it any more. The design system lives in
+ * src/styles/tokens.css + src/styles/base.css and the primitives in src/components/ui/.
+ */
+
+/* Full-height root: the app shell fills the viewport; auth pages (AuthLayout) size against it. */
+#app {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}

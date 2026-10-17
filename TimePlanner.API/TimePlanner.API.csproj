@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.1" />
+    <PackageReference Include="MediatR" Version="13.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.7" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.7" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.7" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.7">
+     <PrivateAssets>all</PrivateAssets>
+     <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Postmark" Version="5.2.0" />
+    <PackageReference Include="QuestPDF" Version="2026.9.1" />
+    <PackageReference Include="SendGrid" Version="9.29.3" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+    <PackageReference Include="TimeZoneConverter" Version="7.2.0" />
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TimePlanner.API.Tests" />
+  </ItemGroup>
+
+  <!-- OFL Noto fonts for PDF reports, embedded in the assembly (see Features/Reports/ReportFonts.cs and the OFL-*.txt files). -->
+  <ItemGroup>
+    <None Remove="Features\Reports\Fonts\**" />
+    <EmbeddedResource Include="Features\Reports\Fonts\*.ttf;Features\Reports\Fonts\*.otf" LogicalName="ReportFonts.%(Filename)%(Extension)" />
+    <None Include="Features\Reports\Fonts\OFL-*.txt" />
+  </ItemGroup>
+
+</Project>

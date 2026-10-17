@@ -1,0 +1,37 @@
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using TimePlanner.API.Data;
+using TimePlanner.API.Services;
+
+namespace TimePlanner.API.Features.Commands.TaskTemplates;
+
+public record DeleteTaskTemplateCommand(Guid Id) : IRequest;
+
+public class DeleteTaskTemplateCommandHandler : IRequestHandler<DeleteTaskTemplateCommand>
+{
+    private readonly ApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
+
+    public DeleteTaskTemplateCommandHandler(ApplicationDbContext context, ICurrentUserService currentUserService)
+    {
+        _context = context;
+        _currentUserService = currentUserService;
+    }
+
+    public async Task Handle(DeleteTaskTemplateCommand request, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) throw new UnauthorizedAccessException();
+
+        var template = await _context.TaskTemplates
+            .FirstOrDefaultAsync(tt => tt.Id == request.Id && tt.UserId == userId, cancellationToken);
+
+        if (template != null)
+        {
+            template.IsDeleted = true;
+
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        // If not found, do nothing, as the desired state is achieved.
+    }
+}
