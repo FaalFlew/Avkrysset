@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -8,13 +9,14 @@ using Microsoft.Extensions.DependencyInjection;
 using TimePlanner.API.Data;
 using TimePlanner.API.Features.Reports;
 using TimePlanner.API.Tests.Unit.Reports;
+using TimePlanner.API.Utilities;
 using Xunit.Abstractions;
 
 namespace TimePlanner.API.Tests.Integration;
 
 /// <summary>
-/// GET /api/reports/personal.{pdf|csv}: headers, the ReportExports audit row, zone bucketing, validation, auth and
-/// rate limiting, end to end on LocalDB.
+/// GET /api/reports/personal.{pdf|csv} and personal.tasks.csv: headers, the ReportExports audit row, zone bucketing,
+/// scope, validation, auth and rate limiting, end to end on LocalDB.
 /// </summary>
 [Collection(ApiCollection.Name)]
 public sealed class ReportsApiTests
@@ -204,6 +206,182 @@ public sealed class ReportsApiTests
         Assert.Equal(SHA256.HashData(bytes), row.ContentSha256);
     }
 
+    private static async Task<(HttpResponseMessage Response, byte[] Bytes, string[] Lines)> CsvAsync(
+        TestUser user, string path, string? timeZone = null, string? origin = null)
+    {
+        var response = await GetAsync(user, path, timeZone, origin);
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, Encoding.UTF8.GetString(bytes));
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes[..3]);
+        return (response, bytes, Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3).Split("\r\n"));
+    }
+
+    /// <summary>"yyyy-MM-dd HH:mm" in Oslo of each task's CreatedOnUtc, by title.</summary>
+    private async Task<Dictionary<string, string>> CreatedAtInOsloAsync(params string[] titles)
+    {
+        using var scope = _fixture.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var oslo = TimeZoneResolver.ResolveOrUtc("Europe/Oslo");
+        return (await db.Tasks.AsNoTracking().Where(t => titles.Contains(t.Title)).ToListAsync())
+            .ToDictionary(t => t.Title, t => TimeZoneInfo.ConvertTimeFromUtc(t.CreatedOnUtc, oslo).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task A_task_csv_lists_the_planner_tasks_with_the_contract_headers_and_an_audit_row()
+    {
+        var org = await OrgTestKit.CreateAsync(_fixture);
+        var member = org.Member;
+        await CreateTaskAsync(member, "Gym", "2026-11-02T07:00:00.000Z", 1);
+        await OrgTestKit.CreateOrgTaskAsync(org.Owner, org.OrgId, "Assigned to member", "2026-11-03T09:00:00.000Z", 2, member, org.Admin);
+        await OrgTestKit.CreateSelfOrgTaskAsync(member, org.OrgId, "Member's own org task", "2026-11-04T22:30:00.000Z", 1.5);
+        // Created by the member's organization for somebody else: not in the member's planner, so not in the list.
+        await OrgTestKit.CreateOrgTaskAsync(org.Admin, org.OrgId, "Admin made it for the owner", "2026-11-02T10:00:00.000Z", 1, org.Owner);
+        const string path = "/api/reports/personal.tasks.csv?view=weekly&year=2026&from=45&to=45&locale=en-US";
+
+        HttpResponseMessage response;
+        byte[] bytes;
+        string[] lines;
+        using (_fixture.SqlCommands.Start())
+        {
+            (response, bytes, lines) = await CsvAsync(member, path, "Europe/Oslo", Origin);
+        }
+
+        var commandsForThreeTasks = _fixture.SqlCommands.Count;
+
+        Assert.Equal("text/csv; charset=utf-8", response.Content.Headers.ContentType?.ToString());
+        Assert.Equal(
+            "attachment; filename=\"time-planner-tasks-2026-W45.csv\"; filename*=UTF-8''time-planner-tasks-2026-W45.csv",
+            Header(response, "Content-Disposition"));
+        Assert.Equal("no-store", Header(response, "Cache-Control"));
+        Assert.Equal("nosniff", Header(response, "X-Content-Type-Options"));
+        var documentId = Header(response, "X-Document-Id");
+        Assert.True(DocumentIds.IsValid(documentId), documentId);
+        var exposed = Header(response, "Access-Control-Expose-Headers");
+        Assert.Contains("Content-Disposition", exposed);
+        Assert.Contains("X-Document-Id", exposed);
+        Assert.Contains("Retry-After", exposed);
+
+        var createdAt = await CreatedAtInOsloAsync("Gym", "Assigned to member", "Member's own org task");
+        var assignees = string.Join(", ", new[] { member.Email, org.Admin.Email }.Order(StringComparer.Ordinal));
+        Assert.Equal(new[]
+        {
+            "# Time Planner task list export",
+            "# Range: Week 45 of 2026 (11/2/2026 – 11/8/2026)",
+            "# Time zone: Europe/Oslo (UTC+01:00)"
+        }, lines[..3]);
+        Assert.Matches(@"^# Generated: \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(Europe/Oslo\)$", lines[3]);
+        Assert.Equal($"# Document ID: {documentId}", lines[4]);
+        Assert.Equal(new[]
+        {
+            "Date,Weekday,Start,End,End date,Duration (h),Duration,Title,Category,Template,Organization,Created by,Assigned to,Created at",
+            $"2026-11-02,Monday,08:00,09:00,2026-11-02,1.00,1:00,Gym,Work,,,{member.Email},,{createdAt["Gym"]}",
+            $"2026-11-03,Tuesday,10:00,12:00,2026-11-03,2.00,2:00,Assigned to member,{org.OrgName},,{org.OrgName},{org.Owner.Email},\"{assignees}\",{createdAt["Assigned to member"]}",
+            // Wednesday 23:30 → Thursday 01:00 (the end's own date).
+            $"2026-11-04,Wednesday,23:30,01:00,2026-11-05,1.50,1:30,Member's own org task,{org.OrgName},,{org.OrgName},{member.Email},{member.Email},{createdAt["Member's own org task"]}",
+            ""
+        }, lines[5..]);
+
+        using (var scope = _fixture.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var row = await db.ReportExports.AsNoTracking().SingleAsync(e => e.DocumentId == documentId);
+            Assert.Equal(("PersonalTasks", "csv", "weekly", "Europe/Oslo", "en-US", (string?)null),
+                (row.Kind, row.Format, row.ViewType, row.TimeZoneId, row.Culture, row.Paper));
+            Assert.Equal((member.Id, (Guid?)member.Id, (Guid?)null), (row.RequestedByUserId, row.SubjectUserId, row.OrganizationId));
+            Assert.Equal(new DateTime(2026, 11, 1, 23, 0, 0, DateTimeKind.Utc), row.RangeStartUtc);
+            Assert.Equal(new DateTime(2026, 11, 8, 23, 0, 0, DateTimeKind.Utc), row.RangeEndUtc);
+            Assert.Equal(SHA256.HashData(bytes), row.ContentSha256);
+        }
+
+        // Same tasks and totals as the analytics CSV and the PDF of the same selection.
+        var (_, _, summary) = await CsvAsync(member, "/api/reports/personal.csv?view=weekly&year=2026&from=45&to=45&locale=en-US", "Europe/Oslo");
+        Assert.Contains("Summary,total_hours,Total hours,,4.50,", summary);
+        Assert.Contains("Summary,task_count,Tasks,,3,", summary);
+        var pdf = ReportTestData.PdfText(await (await GetAsync(member,
+            "/api/reports/personal.pdf?view=weekly&year=2026&from=45&to=45&locale=en-US", "Europe/Oslo")).Content.ReadAsByteArrayAsync());
+        Assert.Contains("Total 4h 30m 3 tasks · 4.5 h", pdf);
+        Assert.Contains("11:30 PM – 1:00 AM +1d 1h 30m Member's own org task", pdf);
+        Assert.DoesNotContain("Admin made it for the owner", pdf);
+
+        // One query for the tasks however many there are (assignee names included): no query per task.
+        for (var i = 0; i < 4; i++)
+        {
+            await OrgTestKit.CreateOrgTaskAsync(org.Owner, org.OrgId, $"More {i}", $"2026-11-06T{8 + i:D2}:00:00.000Z", 1, member, org.Admin, org.Owner);
+        }
+
+        using (_fixture.SqlCommands.Start())
+        {
+            var (_, _, more) = await CsvAsync(member, path, "Europe/Oslo");
+            Assert.Equal(5 + 1 + 7 + 1, more.Length); // metadata, header, 7 tasks, "" after the last CRLF
+        }
+
+        Assert.Equal(commandsForThreeTasks, _fixture.SqlCommands.Count);
+    }
+
+    [Fact]
+    public async Task The_task_csv_leaves_out_organizations_the_user_left()
+    {
+        var org = await OrgTestKit.CreateAsync(_fixture);
+        var leaver = org.Member;
+        await CreateTaskAsync(leaver, "Solo", "2026-11-09T08:00:00.000Z", 1);
+        await OrgTestKit.CreateOrgTaskAsync(org.Owner, org.OrgId, "From an org I left", "2026-11-10T08:00:00.000Z", 2, leaver);
+        const string path = "/api/reports/personal.tasks.csv?view=weekly&year=2026&from=46&to=46&locale=nb-NO";
+
+        var (_, _, before) = await CsvAsync(leaver, path, "Europe/Oslo");
+        Assert.Contains(before, l => l.StartsWith("2026-11-10;tirsdag;09:00;11:00;2026-11-10;2,00;2:00;From an org I left;"));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await leaver.Client.PostAsync($"/api/organizations/{org.OrgId}/members/me/leave", null)).StatusCode);
+
+        var (_, _, after) = await CsvAsync(leaver, path, "Europe/Oslo");
+        Assert.Equal("Date;Weekday;Start;End;End date;Duration (h);Duration;Title;Category;Template;Organization;Created by;Assigned to;Created at", after[5]);
+        var row = Assert.Single(after[6..^1]);
+        Assert.StartsWith($"2026-11-09;mandag;09:00;10:00;2026-11-09;1,00;1:00;Solo;Work;;;{leaver.Email};;", row);
+    }
+
+    [Theory]
+    [InlineData("view=weekly&year=2026&from=41", "to is required.")]
+    [InlineData("view=daily&year=2026&from=40&to=41", "For the daily view, from and to must be the same week.")]
+    [InlineData("view=weekly&year=2025&from=1&to=53", "from and to must be ISO weeks from 1 to 52 of 2025.")]
+    public async Task Invalid_task_csv_selections_are_400_and_nothing_is_audited(string query, string error)
+    {
+        var user = await _fixture.CreateUserAsync();
+
+        var response = await GetAsync(user, $"/api/reports/personal.tasks.csv?{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using (var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()))
+        {
+            Assert.Contains(error, body.RootElement.GetProperty("message").GetString());
+            Assert.Contains(body.RootElement.GetProperty("errors").EnumerateArray(), e => e.GetString() == error);
+        }
+
+        using var scope = _fixture.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        Assert.False(await db.ReportExports.AnyAsync(e => e.RequestedByUserId == user.Id));
+    }
+
+    [Fact]
+    public async Task The_task_csv_is_rate_limited_like_the_reports()
+    {
+        var user = await _fixture.CreateUserAsync();
+        const string path = "/api/reports/personal.tasks.csv?view=weekly&year=2026&from=1&to=1";
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await GetAsync(user, path)).StatusCode);
+        }
+
+        var limited = await GetAsync(user, path, origin: Origin);
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.InRange(int.Parse(Header(limited, "Retry-After")), 1, 60);
+        Assert.Contains("Retry-After", Header(limited, "Access-Control-Expose-Headers"));
+        Assert.StartsWith("Too many report requests.", await OrgTestKit.ReadMessageAsync(limited));
+
+        using var scope = _fixture.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        Assert.Equal(10, await db.ReportExports.CountAsync(e => e.RequestedByUserId == user.Id && e.Kind == "PersonalTasks" && e.Format == "csv"));
+    }
+
     [Theory]
     [InlineData("view=weekly&year=2026&from=41", "to is required.")]
     [InlineData("view=yearly&year=2026&from=1&to=1", "view must be 'monthly', 'weekly' or 'daily'.")]
@@ -242,6 +420,7 @@ public sealed class ReportsApiTests
     [Theory]
     [InlineData("/api/reports/personal.pdf?view=weekly&year=2026&from=1&to=1")]
     [InlineData("/api/reports/personal.csv?view=weekly&year=2026&from=1&to=1")]
+    [InlineData("/api/reports/personal.tasks.csv?view=weekly&year=2026&from=1&to=1")]
     public async Task Signed_out_requests_are_401(string path)
     {
         var response = await _fixture.Factory.CreateClient().GetAsync(path);
@@ -263,6 +442,10 @@ public sealed class ReportsApiTests
                 .EnumerateArray().Select(p => p.GetProperty("name").GetString());
             Assert.Equal(new[] { "view", "year", "from", "to", "paper", "locale" }, parameters);
         }
+
+        var taskParameters = paths.GetProperty("/api/reports/personal.tasks.csv").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Select(p => p.GetProperty("name").GetString());
+        Assert.Equal(new[] { "view", "year", "from", "to", "locale" }, taskParameters);
     }
 
     [Fact]
