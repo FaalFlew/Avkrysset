@@ -3,6 +3,7 @@
 // the right zone (X-Time-Zone for personal reports). No instant ranges are computed here.
 //
 //   GET /api/reports/personal.{pdf|csv}?view=monthly|weekly|daily&year&from&to&paper=A4|Letter&locale=<BCP-47>
+//   GET /api/reports/personal.tasks.csv?view&year&from&to&locale=<BCP-47>   (the task list CSV)
 //   monthly → calendar year, from/to = 0-based month indexes
 //   weekly  → ISO week-year, from/to = ISO weeks
 //   daily   → ISO week-year, from = to = the ISO week shown
@@ -16,6 +17,12 @@ import {
 import type { PaperSize } from "@/lib/paper";
 
 export type ReportFormat = "pdf" | "csv";
+/** What the Export menu downloads from the server: the report (PDF/CSV) or the task list CSV. */
+export type ExportKind = ReportFormat | "tasks-csv";
+
+/** File name prefixes, matching the server's names. */
+export const ANALYTICS_FILE_PREFIX = "time-planner-analytics";
+export const TASKS_FILE_PREFIX = "time-planner-tasks";
 
 export interface ReportSelection {
   view: AnalyticsView;
@@ -63,13 +70,28 @@ export function personalReportUrl(format: ReportFormat, query: ReportQuery): str
   return `/reports/personal.${format}?${reportQueryString(query)}`;
 }
 
+/** Path of the task list CSV: `/reports/personal.tasks.csv?view=weekly&year=2026&from=40&to=40&locale=nb-NO`. */
+export function personalTaskListCsvUrl(selection: ReportSelection, locale: string): string {
+  const params = new URLSearchParams();
+  params.set("view", selection.view);
+  params.set("year", String(selection.year));
+  params.set("from", String(selection.from));
+  params.set("to", String(selection.to));
+  params.set("locale", locale);
+  return `/reports/personal.tasks.csv?${params.toString()}`;
+}
+
+/** Server path for an export of the Export menu. */
+export function exportUrl(kind: ExportKind, query: ReportQuery): string {
+  return kind === "tasks-csv" ? personalTaskListCsvUrl(query, query.locale) : personalReportUrl(kind, query);
+}
+
 /**
  * File name stem of an export for the selection, matching the server's naming:
  * `time-planner-analytics-2026-W40`, `…-2026-W38_2026-W41`, `…-2026-03`, `…-2026-01_2026-12`;
- * the Day view names its ISO week.
+ * the Day view names its ISO week. The task list uses the `time-planner-tasks` prefix.
  */
-export function reportFileStem(sel: AnalyticsSelection): string {
-  const prefix = "time-planner-analytics";
+export function reportFileStem(sel: AnalyticsSelection, prefix: string = ANALYTICS_FILE_PREFIX): string {
   if (sel.view === "daily") {
     const week = normalizedBounds(sel).dailyWeek;
     return `${prefix}-${sel.year}-W${String(week).padStart(2, "0")}`;

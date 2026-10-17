@@ -4,7 +4,8 @@
 // filters at click time (src/lib/reportQuery.ts); the browser only saves the file.
 //   idle → loading ("Preparing PDF…", repeat clicks ignored) → after 3 s `slow` ("Waking up the
 //   server…" + Cancel) → success (announced) | error (toast) | cancelled (AbortController).
-// Guests: the CSV is built in the browser from the on-screen snapshot (src/lib/analyticsCsv.ts).
+// Guests: the CSV is built in the browser from the on-screen snapshot (src/lib/analyticsCsv.ts),
+// the task list CSV from the local tasks (src/lib/taskListCsv.ts).
 // Printing is handled by usePrintMode.
 
 import { computed, getCurrentScope, onScopeDispose, readonly, ref } from "vue";
@@ -19,9 +20,18 @@ import {
 } from "@/lib/analyticsCsv";
 import { todayKey, type DateKey } from "@/lib/datetime";
 import { fallbackExportFileName, parseContentDisposition, saveBlob } from "@/lib/download";
-import { exportErrorMessage, formatLabel } from "@/lib/exportErrors";
+import { exportErrorMessage, formatLabelSentence } from "@/lib/exportErrors";
 import { browserLocale, type PaperSize } from "@/lib/paper";
-import { personalReportUrl, reportFileStem, reportQuery, type ReportFormat } from "@/lib/reportQuery";
+import {
+  ANALYTICS_FILE_PREFIX,
+  TASKS_FILE_PREFIX,
+  exportUrl,
+  reportFileStem,
+  reportQuery,
+  type ExportKind,
+} from "@/lib/reportQuery";
+import { buildTaskListCsv, taskListCsvRows, type TaskListCsvMeta } from "@/lib/taskListCsv";
+import type { TaskListRow } from "@/lib/taskList";
 import apiService from "@/services/apiService";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -94,7 +104,7 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
   const deps: AnalyticsExportDeps = { ...defaultDeps(), ...options.deps };
 
   const status = ref<ExportStatus>("idle");
-  const format = ref<ReportFormat | null>(null);
+  const format = ref<ExportKind | null>(null);
   const slow = ref(false);
   const lastError = ref<string | null>(null);
   const documentId = ref<string | null>(null);
@@ -109,8 +119,11 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
     slow.value = false;
   }
 
-  /** Download the server-rendered report. Ignored while another export is running. */
-  async function downloadReport(fmt: ReportFormat): Promise<ExportStatus> {
+  /**
+   * Download a server-rendered export (report PDF/CSV, or the task list CSV). Ignored while
+   * another export is running.
+   */
+  async function downloadReport(fmt: ExportKind): Promise<ExportStatus> {
     if (status.value === "loading") return "loading";
     const selection = options.selection();
     const query = reportQuery(selection, options.paper(), deps.locale());
@@ -125,7 +138,7 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
     }, SLOW_HINT_MS);
 
     try {
-      const response = await deps.get(personalReportUrl(fmt, query), {
+      const response = await deps.get(exportUrl(fmt, query), {
         responseType: "blob",
         timeout: EXPORT_TIMEOUT_MS,
         signal: request.signal,
@@ -134,11 +147,16 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
       if (isUnexpectedBody(response.data)) throw new Error("The server did not send a file.");
       const filename =
         parseContentDisposition(responseHeader(response.headers, "content-disposition")) ??
-        fallbackExportFileName(selection.view, fmt, deps.today());
+        fallbackExportFileName(
+          selection.view,
+          fmt === "pdf" ? "pdf" : "csv",
+          deps.today(),
+          fmt === "tasks-csv" ? TASKS_FILE_PREFIX : ANALYTICS_FILE_PREFIX
+        );
       deps.save(response.data, filename);
       documentId.value = responseHeader(response.headers, "x-document-id");
       status.value = "success";
-      deps.announce(`${formatLabel(fmt)} downloaded`);
+      deps.announce(`${formatLabelSentence(fmt)} downloaded`);
     } catch (error) {
       const readable = await readBlobError(error);
       const message = exportErrorMessage(readable, fmt);
@@ -181,6 +199,29 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
     }
   }
 
+  /** Guest task list CSV: built from the local tasks of the range and saved right away. */
+  function downloadGuestTaskCsv(
+    rows: readonly TaskListRow[],
+    selection: AnalyticsSelection,
+    meta: TaskListCsvMeta
+  ): boolean {
+    try {
+      const csv = buildTaskListCsv(taskListCsvRows(rows), meta, csvFormatForLocale(deps.locale()));
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      deps.save(blob, `${reportFileStem(selection, TASKS_FILE_PREFIX)}.csv`);
+      format.value = "tasks-csv";
+      status.value = "success";
+      deps.announce("Task list downloaded");
+      return true;
+    } catch (error) {
+      console.error("Could not create the task list CSV:", error);
+      status.value = "error";
+      lastError.value = "Couldn't create the task list. Please try again.";
+      deps.notifyError(lastError.value);
+      return false;
+    }
+  }
+
   if (getCurrentScope()) onScopeDispose(cancel);
 
   return {
@@ -194,6 +235,7 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
     documentId: readonly(documentId),
     downloadReport,
     downloadGuestCsv,
+    downloadGuestTaskCsv,
     cancel,
   };
 }

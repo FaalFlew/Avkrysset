@@ -9,7 +9,7 @@ import {
   type ApiErrorLike,
 } from "@/lib/apiErrors";
 import { now } from "@/lib/datetime";
-import type { ReportFormat } from "@/lib/reportQuery";
+import type { ExportKind } from "@/lib/reportQuery";
 
 export const EXPORT_FORBIDDEN_MESSAGE = "You don't have permission to export this report.";
 export const EXPORT_SESSION_MESSAGE = "Your session has expired. Sign in again to export.";
@@ -17,7 +17,15 @@ export const EXPORT_TIMEOUT_MESSAGE = "The export took too long. Please try agai
 export const EXPORT_RATE_LIMIT_MESSAGE = "Too many exports. Please wait a moment and try again.";
 export const EXPORT_NOT_AVAILABLE_MESSAGE = "Exports aren't available right now. Please try again later.";
 
-export const formatLabel = (format: ReportFormat) => (format === "pdf" ? "PDF" : "CSV");
+/** How messages name an export: "PDF", "CSV", "task list". */
+export const formatLabel = (format: ExportKind) =>
+  format === "pdf" ? "PDF" : format === "csv" ? "CSV" : "task list";
+
+/** {@link formatLabel} at the start of a sentence: "PDF", "CSV", "Task list". */
+export const formatLabelSentence = (format: ExportKind) => {
+  const label = formatLabel(format);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
 
 /** True when the request was cancelled (AbortController / axios CanceledError). */
 export function isCancelledRequest(error: unknown): boolean {
@@ -32,7 +40,7 @@ export function isCancelledRequest(error: unknown): boolean {
  * 404 → "not available" (or the server's message) · 429 → "Too many exports — try again in 12s." ·
  * 5xx → "Couldn't create the PDF…" · timeout · network.
  */
-export function exportErrorMessage(error: unknown, format: ReportFormat, nowMs: number = now()): string | null {
+export function exportErrorMessage(error: unknown, format: ExportKind, nowMs: number = now()): string | null {
   if (isCancelledRequest(error)) return null;
   const label = formatLabel(format);
   const status = httpStatus(error);

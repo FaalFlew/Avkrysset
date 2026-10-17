@@ -1,8 +1,10 @@
 <script setup lang="ts">
 /**
  * ExportMenu — "Export" in the analytics page header.
- *   Signed in: PDF, CSV (rendered by the server for the selected range), Print / Save as PDF.
- *   Guests:    Print / Save as PDF (the only PDF path), CSV (built in the browser).
+ *   Signed in: PDF, CSV, Task list (CSV) (rendered by the server for the selected range),
+ *              Print / Save as PDF.
+ *   Guests:    Print / Save as PDF (the only PDF path), CSV and Task list (CSV) (built in the
+ *              browser).
  *   Paper size (A4 / Letter): defaults to the browser locale's region, override persisted.
  * While a server export runs the trigger becomes "Preparing PDF…" (aria-busy, repeat clicks
  * ignored); after 3 s a "Waking up the server…" hint with Cancel appears. Items are disabled with
@@ -13,10 +15,11 @@
  *   pageState: 'error' | 'loading' | 'first-run' | 'empty' | 'ready'
  *   refetching?: boolean — the data on screen is being replaced
  *   rangeLabel: string — human label of the shown range (CSV metadata)
+ *   taskRows?: TaskListRow[] — the range's tasks (guest task list CSV)
  */
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
-import { ChevronDown, Download, FileSpreadsheet, FileText, Printer } from "lucide-vue-next";
+import { ChevronDown, Download, FileSpreadsheet, FileText, Printer, Sheet } from "lucide-vue-next";
 import { UiButton, UiMenu, type MenuItem } from "@/components/ui";
 import { useAuthStore } from "@/stores/authStore";
 import { useAnalyticsExport } from "@/composables/useAnalyticsExport";
@@ -26,6 +29,8 @@ import { analyticsRange, type AnalyticsSelection } from "@/lib/analyticsBuckets"
 import { formatDateTime, formatZoneLabelForRange, now } from "@/lib/datetime";
 import { formatLabel } from "@/lib/exportErrors";
 import { usePaperPreference, type PaperSize } from "@/lib/paper";
+import { csvGeneratedAt } from "@/lib/taskListCsv";
+import type { TaskListRow } from "@/lib/taskList";
 
 type PageState = "error" | "loading" | "first-run" | "empty" | "ready";
 
@@ -36,8 +41,9 @@ const props = withDefaults(
     pageState: PageState;
     refetching?: boolean;
     rangeLabel: string;
+    taskRows?: TaskListRow[];
   }>(),
-  { refetching: false }
+  { refetching: false, taskRows: () => [] }
 );
 
 const { isAuthenticated } = storeToRefs(useAuthStore());
@@ -84,6 +90,18 @@ function exportGuestCsv(): void {
   });
 }
 
+function exportGuestTaskCsv(): void {
+  if (!props.snapshot) return;
+  const selection = props.snapshot.selection;
+  exporter.downloadGuestTaskCsv(props.taskRows, selection, {
+    rangeLabel: props.rangeLabel,
+    timeZoneLabel: formatZoneLabelForRange(analyticsRange(selection)),
+    generatedAt: csvGeneratedAt(now()),
+  });
+}
+
+const TASK_CSV_LABEL = "Task list (CSV)";
+
 const paperItems = computed<MenuItem[]>(() =>
   (["A4", "Letter"] as PaperSize[]).map((size) => ({
     id: `paper-${size}`,
@@ -109,6 +127,13 @@ const items = computed<MenuItem[]>(() => {
     return [
       print,
       { id: "csv", label: "CSV", icon: FileSpreadsheet, ...disabled(localReason.value), onSelect: exportGuestCsv },
+      {
+        id: "tasks-csv",
+        label: TASK_CSV_LABEL,
+        icon: Sheet,
+        ...disabled(localReason.value),
+        onSelect: exportGuestTaskCsv,
+      },
       ...paperItems.value,
     ];
   }
@@ -126,6 +151,13 @@ const items = computed<MenuItem[]>(() => {
       icon: FileSpreadsheet,
       ...disabled(serverReason.value),
       onSelect: () => void exporter.downloadReport("csv"),
+    },
+    {
+      id: "tasks-csv",
+      label: TASK_CSV_LABEL,
+      icon: Sheet,
+      ...disabled(serverReason.value),
+      onSelect: () => void exporter.downloadReport("tasks-csv"),
     },
     print,
     ...paperItems.value,
