@@ -4,6 +4,7 @@ using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Features.Reports;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
 using Xunit.Abstractions;
 using static TimePlanner.API.Tests.Unit.Reports.ReportTestData;
 
@@ -55,7 +56,7 @@ public sealed class PdfReportSmokeTests
         _output.WriteLine(text);
 
         using var document = PdfDocument.Open(pdf);
-        Assert.Equal(1, document.NumberOfPages);
+        Assert.Equal(2, document.NumberOfPages); // the task list starts on page 2
         Assert.Equal(LetterWidth, document.GetPage(1).Width, 0.5); // en-US => Letter
 
         Assert.Contains(DocumentId, text);
@@ -70,7 +71,8 @@ public sealed class PdfReportSmokeTests
         Assert.Contains("Gym 1 h 12%", text);
         Assert.Contains("Standup Work 1.5 h 19%", text);
         Assert.Contains("Without template 6.5 h 81%", text);
-        Assert.Contains("Page 1 of 1", text);
+        Assert.Contains("Page 1 of 2", text);
+        Assert.Contains("Tasks Time Duration Title Category Template Created by", text);
         Assert.Equal("Time Planner", document.Information.Creator);
     }
 
@@ -212,6 +214,117 @@ public sealed class PdfReportSmokeTests
 
         Assert.Contains("Asia/Dubai (UTC+04:00)", PdfText(pdf));
     }
+
+    [Fact]
+    public void The_task_list_has_day_groups_rows_end_markers_and_a_total_equal_to_the_kpis()
+    {
+        var tasks = new[]
+        {
+            PlannerTask("Deep work", "2026-09-28T08:00:00Z", 2.5),
+            PlannerTask("Standup", "2026-09-29T08:00:00Z", 1.5, template: Standup),
+            PlannerTask("Gym", "2026-09-30T17:00:00Z", 1, category: Gym, name: "Gym", color: "#0E9C8C"),
+            PlannerTask("Night shift", "2026-10-02T20:00:00Z", 3, template: DeletedTemplateId), // 22:00 → 01:00
+            PlannerTask(" ", "2026-10-02T06:00:00Z", 0.25)
+        };
+        var model = Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "Europe/Oslo", "en-US"), tasks, StandupTemplate);
+
+        var text = PdfText(Render(model, "tasks-en-US.pdf"));
+        _output.WriteLine(text);
+
+        Assert.Contains("Total time 8.3 h", text);
+        // Header without an Organization column (no organization tasks), then the first day group.
+        Assert.Contains("Tasks Time Duration Title Category Template Created by Monday, September 28, 2026 · 1 task · 2h 30m", text);
+        Assert.DoesNotContain("Organization", text);
+        Assert.Contains("10:00 AM – 12:30 PM 2h 30m Deep work Work — Ada Lovelace", text);
+        Assert.Contains("Tuesday, September 29, 2026 · 1 task · 1h 30m 10:00 AM – 11:30 AM 1h 30m Standup Work Standup Ada Lovelace", text);
+        Assert.Contains("Wednesday, September 30, 2026 · 1 task · 1h 7:00 PM – 8:00 PM 1h Gym Gym — Ada Lovelace", text);
+        Assert.Contains("Friday, October 2, 2026 · 2 tasks · 3h 15m", text);
+        Assert.Contains("8:00 AM – 8:15 AM 15m Untitled task Work — Ada Lovelace", text);
+        Assert.Contains("10:00 PM – 1:00 AM +1d 3h Night shift Work Deleted template Ada Lovelace", text);
+        Assert.Contains($"Total 8h 15m {model.Kpis.TaskCount} tasks · 8.3 h", text);
+        Assert.Equal(5, model.Kpis.TaskCount);
+        Assert.Equal(8.25, model.Kpis.TotalHours);
+    }
+
+    [Fact]
+    public void Organization_tasks_add_the_organization_column_and_long_lists_repeat_the_header()
+    {
+        var org = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var monday = new DateTime(2026, 9, 28, 6, 0, 0, DateTimeKind.Utc);
+        var tasks = Enumerable.Range(0, 140)
+            .Select(i => PlannerTask($"Item {i:D3}", monday.AddDays(i / 20).AddMinutes(30 * (i % 20)).ToString("O"), 0.5))
+            .Append(PlannerTask("Warehouse shift", "2026-10-04T16:00:00Z", 8, organizationId: org, organizationName: "Acme Logistics",
+                createdBy: "Grace Hopper", assignees: new[] { Ada }))
+            .ToList();
+
+        var pdf = Render(Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "Europe/Oslo", "en-GB"), tasks), "tasks-many.pdf");
+
+        using var document = PdfDocument.Open(pdf);
+        Assert.True(document.NumberOfPages >= 4, $"{document.NumberOfPages} pages");
+        var pages = document.GetPages().Select(page => Normalize(ContentOrderTextExtractor.GetText(page))).ToList();
+        const string header = "Time Duration Title Category Template Created by Organization";
+
+        // From the page where the list starts, every page repeats the column header (with the Organization column).
+        var first = pages.FindIndex(p => p.Contains("Tasks " + header));
+        Assert.True(first >= 0, string.Join("\n", pages));
+        Assert.All(pages.Skip(first), page => Assert.Contains(header, page));
+        var text = string.Join(" ", pages);
+        Assert.Contains("18:00 – 02:00 +1d 8h Warehouse shift Acme Logistics — Grace Hopper Acme Logistics", text);
+        Assert.Contains("Item 000", text);
+        Assert.Contains("Item 139", text);
+        Assert.Contains("Total 78h 141 tasks · 78 h", text);
+    }
+
+    [Fact]
+    public void Task_titles_in_arabic_hebrew_and_cjk_render()
+    {
+        var tasks = new[]
+        {
+            PlannerTask("قراءة كتاب", "2026-09-28T08:00:00Z", 1, category: Guid.NewGuid(), name: "العمل", color: "#DA6A1C"),
+            PlannerTask("עבודה שוטפת", "2026-09-29T08:00:00Z", 1),
+            PlannerTask("工作 仕事 업무", "2026-09-30T08:00:00Z", 1),
+            PlannerTask("Running 🏃", "2026-10-01T08:00:00Z", 1)
+        };
+
+        var pdf = Render(Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "Asia/Dubai", "ar-EG"), tasks), "tasks-scripts.pdf");
+
+        using var document = PdfDocument.Open(pdf);
+        var words = document.GetPages().SelectMany(p => p.GetWords()).ToList();
+        var visual = string.Join(" ", words.Select(w => w.Text));
+        Assert.All(document.GetPages(), page => Assert.DoesNotContain(page.Letters, l => l.Value.Contains((char)0)));
+        Assert.Contains(words, w => Reverse(Logical(w)) == "قراءة");
+        Assert.Contains(words, w => Reverse(Logical(w)) == "كتاب");
+        Assert.Contains(words, w => Reverse(Logical(w)) == "עבודה");
+        Assert.Contains("工作", visual.Normalize(NormalizationForm.FormKC));
+        Assert.Contains("업무", visual);
+        Assert.Contains("🏃", visual);
+        Assert.Contains("Total", visual);
+    }
+
+    [Fact]
+    public void More_than_5000_tasks_are_capped_with_a_note()
+    {
+        // 5,001 tasks over the year, in start order "Task 01" … "Task 5001".
+        var start = new DateTime(2026, 1, 1, 6, 0, 0, DateTimeKind.Utc);
+        var rows = Enumerable.Range(0, ReportTaskList.MaxPdfRows + 1)
+            .Select(i => Row("2026-01-01T06:00:00Z", 0.25) with { Start = start.AddDays(i / 14).AddMinutes(45 * (i % 14)) })
+            .ToList();
+        var model = Build(Request(TaskAnalyticsBreakdown.Monthly, 2026, 0, 11, "UTC", "en-US"), rows);
+        Assert.Equal(5001, model.Tasks.Count);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var pdf = Render(model, "tasks-capped.pdf");
+        _output.WriteLine($"{pdf.Length} bytes in {stopwatch.ElapsedMilliseconds} ms");
+
+        var text = PdfText(pdf);
+        Assert.Contains("Showing the first 5,000 of 5,001 tasks — use Task list (CSV) for the complete list.", text);
+        Assert.Contains(" Task 5000 ", text);
+        Assert.DoesNotContain(" Task 5001 ", text);
+        // The total is still the whole range (= the KPIs).
+        Assert.Contains("Total 1250h 15m 5,001 tasks · 1,250.3 h", text);
+    }
+
+    private static string Normalize(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
 
     [Fact]
     public void Characters_without_a_glyph_render_blank_instead_of_failing()

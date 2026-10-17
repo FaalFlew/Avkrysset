@@ -12,7 +12,7 @@ public interface IReportRenderer
 
 /// <summary>
 /// The analytics report as a printable PDF (QuestPDF): header, KPI tiles, time per period (bar chart),
-/// time per category (donut + table), time per template, and a footer with generation time, document ID and
+/// time per category (donut + table), time per template, the task list, and a footer with generation time, document ID and
 /// page numbers. Light print styling on A4 or US Letter.
 /// </summary>
 public sealed class PdfReportRenderer : IReportRenderer
@@ -65,6 +65,8 @@ public sealed class PdfReportRenderer : IReportRenderer
         texts.AddRange(model.Templates.SelectMany(t => new[] { t.Name, t.CategoryName }));
         texts.AddRange(model.Members.Select(m => m.Name));
         texts.AddRange(model.Periods.SelectMany(p => new[] { p.Label, p.ShortLabel }));
+        texts.AddRange(model.Tasks.Take(ReportTaskList.MaxPdfRows)
+            .SelectMany(t => new[] { t.Title, t.CategoryName, t.TemplateTitle, t.CreatedByDisplayName, t.OrganizationName }));
 
         var missing = ReportFonts.MissingCodePoints(texts);
         if (missing.Count > 0)
@@ -135,6 +137,7 @@ public sealed class PdfReportRenderer : IReportRenderer
             column.Item().ShowEntire().Element(c => ComposePeriodChart(c, model));
             column.Item().EnsureSpace(170).Element(c => ComposeCategories(c, model));
             column.Item().EnsureSpace(90).Element(c => ComposeTemplates(c, model));
+            column.Item().EnsureSpace(110).Element(c => ComposeTasks(c, model));
         });
     }
 
@@ -325,6 +328,169 @@ public sealed class PdfReportRenderer : IReportRenderer
                 }
             });
         });
+    }
+
+    /// <summary>
+    /// Every task of the range (at most <see cref="ReportTaskList.MaxPdfRows"/>), grouped by local start day. The column
+    /// header repeats on every page; a day's header row is kept on the page of its first task and rows never split.
+    /// The total row equals the KPIs (same rows, same sum).
+    /// </summary>
+    private static void ComposeTasks(IContainer container, ReportModel model)
+    {
+        var culture = model.Culture;
+        var zone = model.TimeZone;
+        var showOrganization = model.Tasks.Any(t => t.OrganizationName is not null);
+        // One parsed swatch per color, shared by all rows.
+        var swatches = new Dictionary<string, SvgImage>(StringComparer.Ordinal);
+        SvgImage Swatch(string color)
+        {
+            var safe = ReportCharts.SafeColor(color);
+            if (!swatches.TryGetValue(safe, out var image))
+            {
+                image = SvgImage.FromText(ReportCharts.Swatch(safe, 8));
+                swatches[safe] = image;
+            }
+
+            return image;
+        }
+
+        container.Column(column =>
+        {
+            column.Item().Element(c => SectionTitle(c, "Tasks"));
+            column.Item().PaddingTop(6).Decoration(decoration =>
+            {
+                decoration.Before()
+                    .BorderBottom(0.75f).BorderColor(Rule).PaddingVertical(4)
+                    .DefaultTextStyle(style => style.FontSize(7.5f).FontColor(Muted))
+                    .Element(c => TaskColumns(c, showOrganization,
+                        cell => cell.Text("Time"),
+                        cell => cell.AlignRight().Text("Duration"),
+                        cell => cell.Text("Title"),
+                        cell => cell.Text("Category"),
+                        cell => cell.Text("Template"),
+                        cell => cell.Text("Created by"),
+                        cell => cell.Text("Organization")));
+
+                decoration.Content().Column(list =>
+                {
+                    var remaining = ReportTaskList.MaxPdfRows;
+                    foreach (var day in ReportTaskList.Days(model.Tasks, zone))
+                    {
+                        if (remaining == 0)
+                        {
+                            break;
+                        }
+
+                        var tasks = day.Tasks.Take(remaining).ToList();
+                        remaining -= tasks.Count;
+
+                        // The day's header row never ends a page: it stays with the day's first task.
+                        list.Item().PreventPageBreak().Column(group =>
+                        {
+                            group.Item().Element(c => TaskDayHeader(c, day, culture));
+                            group.Item().Element(c => TaskRow(c, tasks[0], model, showOrganization, Swatch));
+                        });
+
+                        foreach (var task in tasks.Skip(1))
+                        {
+                            list.Item().PreventPageBreak().Element(c => TaskRow(c, task, model, showOrganization, Swatch));
+                        }
+                    }
+
+                    list.Item().PreventPageBreak().Element(c => TaskTotalRow(c, model, showOrganization));
+
+                    if (model.Tasks.Count > ReportTaskList.MaxPdfRows)
+                    {
+                        list.Item().PaddingTop(6).Text(
+                                $"Showing the first {ReportFormatting.Count(ReportTaskList.MaxPdfRows, culture)} of " +
+                                $"{ReportFormatting.Count(model.Tasks.Count, culture)} tasks — use Task list (CSV) for the complete list.")
+                            .FontSize(8).Italic().FontColor(Secondary);
+                    }
+                });
+            });
+        });
+    }
+
+    /// <summary>Time, Duration, Title, Category, Template, Created by and (when any task has one) Organization.</summary>
+    private static void TaskColumns(IContainer container, bool showOrganization, params Action<IContainer>[] cells)
+    {
+        float[] weights = { 3f, 1.2f, 4f, 2.5f, 2.1f, 2.1f, 2.1f };
+        container.Row(row =>
+        {
+            row.Spacing(6);
+            for (var i = 0; i < cells.Length; i++)
+            {
+                if (i == 6 && !showOrganization)
+                {
+                    continue;
+                }
+
+                // AlignMiddle: a cell whose text uses a taller fallback font (e.g. CJK) stays centred with its neighbours.
+                row.RelativeItem(weights[i]).AlignMiddle().Element(cells[i]);
+            }
+        });
+    }
+
+    private static void TaskDayHeader(IContainer container, ReportTaskDay day, System.Globalization.CultureInfo culture)
+    {
+        container.Background(Tile).BorderBottom(0.5f).BorderColor(Rule).PaddingVertical(4).PaddingHorizontal(4).Text(text =>
+        {
+            text.Span(ReportFormatting.DayLabel(day.Day, culture)).Bold();
+            text.Span($" · {ReportFormatting.Tasks(day.Tasks.Count, culture)} · {ReportFormatting.Duration(day.Hours)}")
+                .FontColor(Secondary);
+        });
+    }
+
+    private static void TaskRow(IContainer container, ReportTask task, ReportModel model, bool showOrganization, Func<string, SvgImage> swatch)
+    {
+        var culture = model.Culture;
+        var zone = model.TimeZone;
+        var marker = ReportTaskList.EndDayMarker(task, zone);
+        // A time never wraps inside itself ("9:30 AM"); the range wraps at the dash or before the marker.
+        string Time(DateTime local) => ReportFormatting.Time(local, culture).Replace(' ', ' ');
+        var range = $"{Time(ReportTaskList.LocalStart(task, zone))} – {Time(ReportTaskList.LocalEnd(task, zone))}";
+        var untitled = string.IsNullOrWhiteSpace(task.Title);
+
+        container.BorderBottom(0.5f).BorderColor(Rule).PaddingVertical(3.5f)
+            .DefaultTextStyle(style => style.FontSize(8))
+            .Element(c => TaskColumns(c, showOrganization,
+                cell => cell.Text(text =>
+                {
+                    text.Span(range);
+                    if (marker.Length > 0)
+                    {
+                        text.Span(" " + marker).FontSize(7).Bold().FontColor(Accent);
+                    }
+                }),
+                cell => cell.AlignRight().Text(ReportFormatting.Duration(task.DurationHours)),
+                cell => cell.Text(untitled ? ReportTaskList.UntitledTask : task.Title).ClampLines(3)
+                    .Italic(untitled).FontColor(untitled ? Muted : Ink),
+                cell => cell.Row(category =>
+                {
+                    category.ConstantItem(8).AlignMiddle().Height(8).Svg(swatch(task.CategoryColor));
+                    category.ConstantItem(4);
+                    category.RelativeItem().Text(task.CategoryName).ClampLines(2);
+                }),
+                cell => cell.Text(task.TemplateTitle ?? "—").ClampLines(2)
+                    .FontColor(task.TemplateTitle is null || task.TemplateTitle == ReportModelBuilder.DeletedTemplate ? Muted : Secondary),
+                cell => cell.Text(task.CreatedByDisplayName).ClampLines(2).FontColor(Secondary),
+                cell => cell.Text(task.OrganizationName ?? "").ClampLines(2).FontColor(Secondary)));
+    }
+
+    private static void TaskTotalRow(IContainer container, ReportModel model, bool showOrganization)
+    {
+        var culture = model.Culture;
+        var kpis = model.Kpis;
+        container.BorderTop(0.75f).BorderColor(Ink).PaddingVertical(4)
+            .DefaultTextStyle(style => style.FontSize(8).Bold())
+            .Element(c => TaskColumns(c, showOrganization,
+                cell => cell.Text("Total"),
+                cell => cell.AlignRight().Text(ReportFormatting.Duration(kpis.TotalHours)),
+                cell => cell.Text($"{ReportFormatting.Tasks(kpis.TaskCount, culture)} · {ReportFormatting.Hours(kpis.TotalHours, culture)}"),
+                _ => { },
+                _ => { },
+                _ => { },
+                _ => { }));
     }
 
     private static void ComposeFooter(IContainer container, ReportModel model)

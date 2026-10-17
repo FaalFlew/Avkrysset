@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
+using TimePlanner.API.Models;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
 
@@ -28,6 +29,20 @@ public sealed record AnalyticsTaskRow(
     // (its category belongs to whoever created it). The organization id stands in as the category id.
     public static AnalyticsTaskRow ForOrganizationTask(DateTime start, double duration, Guid organizationId, string organizationName) =>
         new(start, duration, organizationId, organizationName, OrganizationPalette.ColorFor(organizationId), null);
+
+    /// <summary>The row of a planner task: an organization task counts under its organization, a personal task under its category.</summary>
+    public static AnalyticsTaskRow ForPlannerTask(
+        DateTime start,
+        double duration,
+        Guid categoryId,
+        string categoryName,
+        string categoryColor,
+        Guid? templateId,
+        Guid? organizationId,
+        string? organizationName) =>
+        organizationId is Guid id
+            ? ForOrganizationTask(start, duration, id, organizationName ?? AnalyticsTaskRows.UnnamedOrganization)
+            : new AnalyticsTaskRow(start, duration, categoryId, categoryName, categoryColor, templateId);
 }
 
 public class GetTaskAnalyticsQueryHandler
@@ -129,17 +144,26 @@ public sealed record AnalyticsTemplate(string Title, string CategoryName, string
 /// <summary>Loads the rows that personal analytics and personal reports are computed from.</summary>
 public static class AnalyticsTaskRows
 {
+    /// <summary>Category name of an organization task whose organization name could not be loaded.</summary>
+    public const string UnnamedOrganization = "Organization";
+
     /// <summary>
     /// The user's planner tasks (personal tasks + organization tasks assigned to them, active memberships only)
-    /// starting in the half-open UTC range [startUtc, endUtc). Organization tasks count under the organization.
+    /// starting in the half-open UTC range [startUtc, endUtc), untracked.
+    /// </summary>
+    public static IQueryable<TaskItem> PlannerTasks(ApplicationDbContext context, Guid userId, DateTime startUtc, DateTime endUtc) =>
+        context.Tasks
+            .AsNoTracking()
+            .Where(PlannerScope.ForUser(context, userId))
+            .Where(t => t.Start >= startUtc && t.Start < endUtc);
+
+    /// <summary>
+    /// The rows of <see cref="PlannerTasks"/>. Organization tasks count under the organization.
     /// </summary>
     public static async Task<List<AnalyticsTaskRow>> ForPlannerAsync(
         ApplicationDbContext context, Guid userId, DateTime startUtc, DateTime endUtc, CancellationToken cancellationToken)
     {
-        var rows = await context.Tasks
-            .AsNoTracking()
-            .Where(PlannerScope.ForUser(context, userId))
-            .Where(t => t.Start >= startUtc && t.Start < endUtc)
+        var rows = await PlannerTasks(context, userId, startUtc, endUtc)
             .Select(t => new
             {
                 t.Start,
@@ -154,9 +178,8 @@ public static class AnalyticsTaskRows
             .ToListAsync(cancellationToken);
 
         return rows
-            .Select(r => r.OrganizationId is Guid organizationId
-                ? AnalyticsTaskRow.ForOrganizationTask(r.Start, r.Duration, organizationId, r.OrganizationName ?? "Organization")
-                : new AnalyticsTaskRow(r.Start, r.Duration, r.CategoryId, r.CategoryName, r.CategoryColor, r.TemplateId))
+            .Select(r => AnalyticsTaskRow.ForPlannerTask(
+                r.Start, r.Duration, r.CategoryId, r.CategoryName, r.CategoryColor, r.TemplateId, r.OrganizationId, r.OrganizationName))
             .ToList();
     }
 

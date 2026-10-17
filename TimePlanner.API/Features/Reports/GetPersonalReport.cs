@@ -12,9 +12,17 @@ namespace TimePlanner.API.Features.Reports;
 /// <summary>A rendered export ready to send.</summary>
 public sealed record ReportFile(byte[] Content, string ContentType, string FileName, string DocumentId);
 
+/// <summary>What an export contains: the analytics report (PDF or CSV) or the task list (CSV only).</summary>
+public enum ReportContent
+{
+    Analytics,
+    TaskList
+}
+
 /// <summary>
-/// The signed-in user's analytics (personal tasks + organization tasks assigned to them) as PDF or CSV.
-/// The selection is resolved in <paramref name="TimeZoneId"/> (the X-Time-Zone header; null or unknown = UTC).
+/// The signed-in user's analytics (personal tasks + organization tasks assigned to them) as PDF or CSV, or their
+/// task list as CSV (<paramref name="Content"/>). The selection is resolved in <paramref name="TimeZoneId"/>
+/// (the X-Time-Zone header; null or unknown = UTC).
 /// </summary>
 public record GetPersonalReportQuery(
     ReportFormat Format,
@@ -24,7 +32,8 @@ public record GetPersonalReportQuery(
     int? To,
     string? Paper,
     string? Locale,
-    string? TimeZoneId) : IRequest<ReportFile>;
+    string? TimeZoneId,
+    ReportContent Content = ReportContent.Analytics) : IRequest<ReportFile>;
 
 public class GetPersonalReportQueryValidator : AbstractValidator<GetPersonalReportQuery>
 {
@@ -44,6 +53,10 @@ public class GetPersonalReportQueryValidator : AbstractValidator<GetPersonalRepo
         RuleFor(q => q.Paper)
             .Must(paper => ReportLocale.TryParsePaper(paper, out _))
             .WithMessage("paper must be 'A4' or 'Letter'.");
+
+        RuleFor(q => q.Content)
+            .Must((query, content) => content == ReportContent.Analytics || query.Format == ReportFormat.Csv)
+            .WithMessage("The task list is only available as CSV.");
     }
 }
 
@@ -99,12 +112,15 @@ public class GetPersonalReportQueryHandler : IRequestHandler<GetPersonalReportQu
             DocumentId = DocumentIds.New(generatedAtUtc)
         }, cancellationToken);
 
-        var content = request.Format == ReportFormat.Pdf ? _renderer.RenderPdf(model) : CsvReportWriter.Write(model);
+        var taskList = request.Content == ReportContent.TaskList;
+        var content = request.Format == ReportFormat.Pdf
+            ? _renderer.RenderPdf(model)
+            : taskList ? CsvReportWriter.WriteTasks(model) : CsvReportWriter.Write(model);
 
         _context.ReportExports.Add(new ReportExport
         {
             DocumentId = model.DocumentId,
-            Kind = model.Kind.ToString(),
+            Kind = taskList ? ReportExportKinds.PersonalTasks : model.Kind.ToString(),
             Format = request.Format == ReportFormat.Pdf ? "pdf" : "csv",
             RequestedByUserId = userId.Value,
             SubjectUserId = userId.Value,
@@ -120,14 +136,14 @@ public class GetPersonalReportQueryHandler : IRequestHandler<GetPersonalReportQu
         await _context.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation(
-            "Report {DocumentId} ({Format}, {View} {Year} {From}-{To}, {TimeZoneId}, {Culture}) generated: {Bytes} bytes.",
-            model.DocumentId, request.Format, selection.View, selection.Year, selection.From, selection.To,
-            model.TimeZoneId, model.CultureName, content.Length);
+            "Report {DocumentId} ({Content} {Format}, {View} {Year} {From}-{To}, {TimeZoneId}, {Culture}) generated: {Tasks} tasks, {Bytes} bytes.",
+            model.DocumentId, request.Content, request.Format, selection.View, selection.Year, selection.From, selection.To,
+            model.TimeZoneId, model.CultureName, model.Tasks.Count, content.Length);
 
         return new ReportFile(
             content,
             request.Format == ReportFormat.Pdf ? "application/pdf" : CsvReportWriter.ContentType,
-            ReportFileNames.For(selection, request.Format),
+            ReportFileNames.For(selection, request.Format, taskList ? ReportFileNames.TasksPrefix : ReportFileNames.PersonalPrefix),
             model.DocumentId);
     }
 }

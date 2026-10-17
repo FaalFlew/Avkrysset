@@ -11,7 +11,7 @@ public class ReportExport
     /// <summary>"TP-yyyyMMdd-XXXXXXXX", printed on the document. Unique.</summary>
     public string DocumentId { get; set; } = string.Empty;
 
-    /// <summary>"Personal", "Organization" or "Member".</summary>
+    /// <summary>"Personal", "Organization", "Member" or "PersonalTasks" (task list CSV).</summary>
     public string Kind { get; set; } = string.Empty;
 
     /// <summary>"pdf" or "csv".</summary>

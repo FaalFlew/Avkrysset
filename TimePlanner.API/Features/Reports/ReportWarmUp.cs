@@ -38,9 +38,18 @@ public static class ReportWarmUp
     public static ReportModel SampleModel(string? timeZoneId = "UTC", string? locale = "en-US", PaperSize? paper = null)
     {
         var category = Guid.Parse("8f6b2e1a-0c1d-4c55-9a51-6b0f2f0e9a01");
+        var user = Guid.Parse("8f6b2e1a-0c1d-4c55-9a51-6b0f2f0e9a02");
         var start = new DateTime(2026, 9, 28, 9, 0, 0, DateTimeKind.Utc);
         var tasks = Enumerable.Range(0, 5)
-            .Select(day => new AnalyticsTaskRow(start.AddDays(day), 1.5, category, "Work", "#2F7FE0", null))
+            .Select(day => new ReportTaskSource(
+                new Guid(day + 1, 0, 0, new byte[8]),
+                "Focus block",
+                new AnalyticsTaskRow(start.AddDays(day), 1.5, category, "Work", "#2F7FE0", null),
+                null,
+                user,
+                "Time Planner",
+                Array.Empty<string>(),
+                start.AddDays(-1)))
             .ToList();
 
         return ReportModelBuilder.Build(new ReportRequest

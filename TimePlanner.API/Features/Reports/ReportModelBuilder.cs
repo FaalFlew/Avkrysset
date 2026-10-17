@@ -28,7 +28,7 @@ public sealed record ReportRequest
 
 /// <summary>
 /// Builds <see cref="ReportModel"/>s: loads the rows (same scope and grouping as the analytics page) and computes
-/// KPIs, zero-filled periods, categories and templates.
+/// KPIs, zero-filled periods, categories, templates and the task list.
 /// </summary>
 public sealed class ReportModelBuilder
 {
@@ -54,8 +54,8 @@ public sealed class ReportModelBuilder
         var (timeZoneId, timeZone) = ResolveZone(request.TimeZoneId, _logger);
         var (startUtc, endUtc) = ResolveRange(request.Selection, timeZone);
 
-        var tasks = await AnalyticsTaskRows.ForPlannerAsync(_context, userId, startUtc, endUtc, cancellationToken);
-        var templates = await AnalyticsTaskRows.TemplatesOfAsync(_context, tasks, cancellationToken);
+        var tasks = await ReportTaskList.ForPlannerAsync(_context, userId, startUtc, endUtc, cancellationToken);
+        var templates = await AnalyticsTaskRows.TemplatesOfAsync(_context, tasks.Select(t => t.Row), cancellationToken);
 
         return Build(request with { TimeZoneId = timeZoneId }, tasks, templates);
     }
@@ -81,10 +81,14 @@ public sealed class ReportModelBuilder
         return (startUtc, endUtc);
     }
 
-    /// <summary>Pure part: the model for <paramref name="tasks"/> (rows outside the selection's range are ignored).</summary>
+    /// <summary>
+    /// Pure part: the model for <paramref name="tasks"/> (tasks outside the selection's range are ignored). The KPIs,
+    /// breakdowns and the task list come from the same rows, summed in task-list order, so the task list's count and
+    /// hours equal the KPIs exactly.
+    /// </summary>
     public static ReportModel Build(
         ReportRequest request,
-        IEnumerable<AnalyticsTaskRow> tasks,
+        IEnumerable<ReportTaskSource> tasks,
         IReadOnlyDictionary<Guid, AnalyticsTemplate> templates)
     {
         var (timeZoneId, timeZone) = ResolveZone(request.TimeZoneId);
@@ -93,10 +97,10 @@ public sealed class ReportModelBuilder
         var localeCulture = ReportLocale.CultureFor(request.Locale);
         var culture = ReportLocale.FormattingCultureFor(localeCulture);
 
-        var rows = tasks
-            .Where(t => t.Start >= startUtc && t.Start < endUtc)
-            .OrderBy(t => t.Start)
-            .ToList();
+        var sources = ReportTaskList.Order(
+            tasks.Where(t => t.Row.Start >= startUtc && t.Row.Start < endUtc),
+            t => t.Row.Start, t => t.Title, t => t.Id);
+        var rows = sources.Select(t => t.Row).ToList();
         var totalHours = rows.Sum(t => t.Duration);
         double ShareOf(double hours) => totalHours > 0 ? hours / totalHours : 0;
 
@@ -142,7 +146,8 @@ public sealed class ReportModelBuilder
             Kpis = kpis,
             Periods = Periods(selection, rows, timeZone, startUtc, endUtc, culture),
             Categories = categories,
-            Templates = Templates(rows, templates, totalHours)
+            Templates = Templates(rows, templates, totalHours),
+            Tasks = sources.Select(t => ReportTaskList.ToTask(t, templates)).ToList()
         };
     }
 

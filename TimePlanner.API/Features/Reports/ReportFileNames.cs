@@ -7,10 +7,12 @@ namespace TimePlanner.API.Features.Reports;
 /// Download names: "time-planner-analytics-2026-W40.pdf", "time-planner-analytics-2026-W38_2026-W41.csv",
 /// "time-planner-analytics-2026-10.pdf", "time-planner-analytics-2026-01_2026-12.pdf".
 /// The daily view names the week it shows. Organization reports (Phase 4) use "time-planner-{org-slug}-…".
+/// The task list CSV uses <see cref="TasksPrefix"/>: "time-planner-tasks-2026-W40.csv".
 /// </summary>
 public static class ReportFileNames
 {
     public const string PersonalPrefix = "time-planner-analytics";
+    public const string TasksPrefix = "time-planner-tasks";
 
     public static string For(ReportSelection selection, ReportFormat format, string prefix = PersonalPrefix)
     {
