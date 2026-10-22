@@ -214,12 +214,15 @@ describe(`useAnalyticsTasks — signed in (${TEST_ZONE})`, () => {
     expect(pending).toHaveLength(3);
     expect(list.isRefetching.value).toBe(true);
     expect(list.rows.value.map((r) => r.id)).toEqual(["first"]); // previous rows stay meanwhile
+    // …and say which range they are (the page's captions describe the rows on screen).
+    expect(list.selection.value?.weekRange).toEqual({ start: 41, end: 42 });
 
     pending[2]!.resolve([task("w31", "2026-07-28", "09:00", 1)]);
     await flush();
     pending[1]!.resolve([task("w30-stale", "2026-07-21", "09:00", 1)]);
     await flush();
     expect(list.rows.value.map((r) => r.id)).toEqual(["w31"]);
+    expect(list.selection.value?.weekRange).toEqual({ start: 31, end: 31 });
     expect(list.isRefetching.value).toBe(false);
     scope.stop();
   });

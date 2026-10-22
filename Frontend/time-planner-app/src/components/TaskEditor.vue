@@ -370,9 +370,18 @@ const readOnlyWhen = computed(() => {
   if (!t) return "";
   return `${formatDate(t.start, "weekday")} · ${formatTaskTimeRange(t.start, t.duration)}`;
 });
+/**
+ * Category of the read-only view. An assigned org task counts under its ORGANIZATION (as in
+ * analytics and its task list) — never the creator's own (private) category name. The opener may
+ * pass the grouping it shows (name + color, e.g. the analytics task list).
+ */
 const readOnlyCategory = computed(() => {
   const t = task.value;
   if (!t) return { name: "", color: OTHER_COLOR };
+  if (isOrgTask(t)) {
+    const hint = state.categoryHint;
+    return { name: hint?.name || organizationLabel(t), color: hint?.color || t.categoryColor || OTHER_COLOR };
+  }
   const own = categories.value.find((c) => c.id === t.categoryId);
   return { name: own?.name ?? t.categoryName, color: own?.color ?? t.categoryColor ?? OTHER_COLOR };
 });

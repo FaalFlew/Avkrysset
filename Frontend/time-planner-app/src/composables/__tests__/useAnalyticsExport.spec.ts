@@ -18,7 +18,7 @@ import type { AnalyticsSelection } from "@/lib/analyticsBuckets";
 import type { AnalyticsSnapshot } from "@/composables/useStats";
 import type { PaperSize } from "@/lib/paper";
 import { buildTaskListRows } from "@/lib/taskList";
-import { combineDateAndTime, formatWeekdayLong } from "@/lib/datetime";
+import { combineDateAndTime, formatDateRange, formatWeekdayLong } from "@/lib/datetime";
 
 interface Pending {
   url: string;
@@ -300,7 +300,6 @@ describe("useAnalyticsExport — task list CSV", () => {
     );
     expect(
       exporter.downloadGuestTaskCsv(rows, selection, {
-        rangeLabel: "Week 42 · Oct 12 – 18, 2026",
         timeZoneLabel: "UTC",
         generatedAt: "2026-10-17 10:00 (UTC)",
       })
@@ -312,8 +311,11 @@ describe("useAnalyticsExport — task list CSV", () => {
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
     expect(text).toContain("# Time Planner task list export\r\n");
+    // One locale (deps.locale() = nb-NO) for the delimiter, the decimal, the weekday and the range label.
+    expect(text).toContain(`# Range: Week 42 · ${formatDateRange("2026-10-12", "2026-10-18", "nb-NO")}\r\n`);
+    expect(formatWeekdayLong("2026-10-14", "nb-NO")).toBe("onsdag");
     expect(text).toContain(
-      `2026-10-14;${formatWeekdayLong("2026-10-14")};09:00;10:30;2026-10-14;1,50;1:30;"Plan; review";Work;;;You;;\r\n`
+      `2026-10-14;onsdag;09:00;10:30;2026-10-14;1,50;1:30;"Plan; review";Work;;;You;;\r\n`
     );
     expect(deps.announce).toHaveBeenCalledWith("Task list downloaded");
   });

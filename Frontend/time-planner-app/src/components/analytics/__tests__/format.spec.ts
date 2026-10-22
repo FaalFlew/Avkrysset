@@ -69,3 +69,31 @@ describe("analytics labels", () => {
     expect(periodCount("weekly", 53)).toBe("53 weeks");
   });
 });
+
+describe("counts and export locales", () => {
+  it("counts use the locale's grouping, like the KPIs and the PDF", async () => {
+    const { formatCount, pluralize } = await import("@/lib/format");
+    const grouped = new Intl.NumberFormat().format(5003);
+    expect(formatCount(5003)).toBe(grouped);
+    expect(pluralize(5003, "task")).toBe(`${grouped} tasks`);
+    expect(pluralize(1, "task")).toBe("1 task");
+    expect(pluralize(12, "month")).toBe("12 months");
+  });
+
+  it("selectionSummary can format its dates in an export's locale", () => {
+    const sel: AnalyticsSelection = {
+      view: "monthly",
+      year: 2026,
+      monthRange: { start: 2, end: 2 },
+      weekRange: { start: 1, end: 53 },
+      dailyWeek: 1,
+    };
+    expect(selectionSummary(sel, 1, "nb-NO")).toBe(`${formatMonthYear(2026, 2, "nb-NO")} · 1 month`);
+    expect(formatMonthYear(2026, 2, "nb-NO")).toBe("mars 2026");
+    expect(selectionSummary({ ...sel, view: "weekly", weekRange: { start: 42, end: 42 } }, 1, "de-DE")).toBe(
+      `Week 42 · ${formatDateRange("2026-10-12", "2026-10-18", "de-DE")}`
+    );
+    // Without a locale: the display locale (unchanged behaviour).
+    expect(selectionSummary(sel, 1)).toBe(`${formatMonthYear(2026, 2)} · 1 month`);
+  });
+});

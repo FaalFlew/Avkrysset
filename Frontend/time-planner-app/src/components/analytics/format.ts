@@ -85,15 +85,15 @@ export function weekRangeOptionLabel(isoYear: number, week: number): string {
 /**
  * Human summary of the selection, used as the page subtitle and chart captions:
  * "Jan – Dec 2026 · 12 months", "Weeks 1–53 · Dec 29, 2025 – Jan 3, 2027",
- * "Week 40 · Sep 28 – Oct 4, 2026".
+ * "Week 40 · Sep 28 – Oct 4, 2026". Dates use `locale` when given (exports), else the display locale.
  */
-export function selectionSummary(sel: AnalyticsSelection, periods: number): string {
+export function selectionSummary(sel: AnalyticsSelection, periods: number, locale?: string): string {
   if (sel.view === "monthly") {
-    const names = monthNames("short");
+    const names = monthNames("short", locale);
     const { start, end } = sel.monthRange;
     const span =
       start === end
-        ? formatMonthYear(sel.year, start)
+        ? formatMonthYear(sel.year, start, locale)
         : `${names[start]} – ${names[end]} ${sel.year}`;
     return `${span} · ${periodCount("monthly", periods)}`;
   }
@@ -102,10 +102,10 @@ export function selectionSummary(sel: AnalyticsSelection, periods: number): stri
     const first = isoWeekBounds(sel.year, start).start;
     const last = isoWeekBounds(sel.year, end).end;
     const weeks = start === end ? `Week ${start}` : `Weeks ${start}–${end}`;
-    return `${weeks} · ${formatDateRange(first, last)}`;
+    return `${weeks} · ${formatDateRange(first, last, locale)}`;
   }
   const { start, end } = isoWeekBounds(sel.year, sel.dailyWeek);
-  return `Week ${sel.dailyWeek} · ${formatDateRange(start, end)}`;
+  return `Week ${sel.dailyWeek} · ${formatDateRange(start, end, locale)}`;
 }
 
 /** Short scope label for KPI subs: "Jan – Dec 2026", "W1–W53 2026", "Week 40, 2026". */

@@ -37,6 +37,8 @@ export interface AnalyticsTasksOptions {
 export interface AnalyticsTasks {
   /** Every task of the range, in list order (the previous range's while refetching). */
   rows: ComputedRef<TaskListRow[]>;
+  /** The selection `rows` belong to (lags the filters while refetching); null before the first load. */
+  selection: ComputedRef<AnalyticsSelection | null>;
   /** First load in progress (no rows yet). */
   isLoading: ComputedRef<boolean>;
   /** A refetch is running while previous rows are shown. */
@@ -78,6 +80,7 @@ export function useAnalyticsTasks(options: AnalyticsTasksOptions): AnalyticsTask
     });
     return {
       rows,
+      selection: computed(() => options.selection.value),
       isLoading: computed(() => false),
       isRefetching: computed(() => false),
       error: ref(null),
@@ -87,6 +90,7 @@ export function useAnalyticsTasks(options: AnalyticsTasksOptions): AnalyticsTask
 
   // SIGNED IN: fetch the range; keep the previous tasks on screen while a new range loads.
   const tasks = ref<Task[] | null>(null);
+  const loadedSelection = ref<AnalyticsSelection | null>(null);
   const pending = ref(0);
   const error = ref<string | null>(null);
   let latestRequest = 0;
@@ -98,6 +102,7 @@ export function useAnalyticsTasks(options: AnalyticsTasksOptions): AnalyticsTask
       const data = await getTasks(analyticsRange(sel));
       if (requestId !== latestRequest) return; // a newer selection superseded this one
       tasks.value = data;
+      loadedSelection.value = sel;
       error.value = null;
     } catch (e) {
       if (requestId !== latestRequest) return;
@@ -131,6 +136,7 @@ export function useAnalyticsTasks(options: AnalyticsTasksOptions): AnalyticsTask
 
   return {
     rows: computed(() => (tasks.value ? buildTaskListRows(tasks.value, context.value) : [])),
+    selection: computed(() => loadedSelection.value),
     isLoading: computed(() => pending.value > 0 && tasks.value === null),
     isRefetching: computed(() => pending.value > 0 && tasks.value !== null),
     error,

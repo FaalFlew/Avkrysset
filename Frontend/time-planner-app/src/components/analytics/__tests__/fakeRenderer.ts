@@ -12,10 +12,28 @@ export interface FakeNode {
   props: Record<string, unknown>;
   children: FakeNode[];
   parent: FakeNode | null;
+  /** Like HTMLElement.focus(): records the node in {@link fakeFocus}. */
+  focus: () => void;
+  scrollIntoView: () => void;
 }
 
+/** The element that was focused last (via `el.focus()` in component code). */
+export const fakeFocus: { current: FakeNode | null } = { current: null };
+
 function node(type: FakeNode["type"], tag = "", text = ""): FakeNode {
-  return { type, tag, text, props: {}, children: [], parent: null };
+  const n: FakeNode = {
+    type,
+    tag,
+    text,
+    props: {},
+    children: [],
+    parent: null,
+    focus: () => {
+      fakeFocus.current = n;
+    },
+    scrollIntoView: () => {},
+  };
+  return n;
 }
 
 function detach(child: FakeNode): void {

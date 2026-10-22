@@ -38,7 +38,8 @@ import CategoryDonut from "../CategoryDonut.vue";
 import { buildTaskListRows, type TaskListRow } from "@/lib/taskList";
 import { addDays, combineDateAndTime, formatDate } from "@/lib/datetime";
 import { TEST_ZONE } from "@/lib/__tests__/tz";
-import { byClass, byTag, closest, findAll, fire, hasClass, mountFake, textOf, type FakeNode } from "./fakeRenderer";
+import { byClass, byTag, closest, fakeFocus, findAll, fire, hasClass, mountFake, textOf, type FakeNode } from "./fakeRenderer";
+import { formatDuration } from "@/lib/format";
 
 // UiIconButton checks `instanceof HTMLElement` for its tooltip anchor.
 if (typeof globalThis.HTMLElement === "undefined") Object.assign(globalThis, { HTMLElement: class {} });
@@ -86,9 +87,28 @@ const SAMPLE = () =>
     task("Standup", addDays(DAY, 1), "10:00", 0.25),
   ]);
 
+interface ListState {
+  rows: TaskListRow[];
+  loading: boolean;
+  refetching: boolean;
+  dim: boolean | undefined;
+  error: string | null;
+  category: string | null;
+  scopeLabel: string;
+}
+
 /** Mount TaskList with reactive props and a log of its events. */
-function mountList(initial: Partial<{ rows: TaskListRow[]; loading: boolean; error: string | null; category: string | null }>) {
-  const state = reactive({ rows: [] as TaskListRow[], loading: false, error: null as string | null, category: null as string | null, ...initial });
+function mountList(initial: Partial<ListState>) {
+  const state = reactive<ListState>({
+    rows: [],
+    loading: false,
+    refetching: false,
+    dim: undefined,
+    error: null,
+    category: null,
+    scopeLabel: "Week 42, 2026",
+    ...initial,
+  });
   const events = { open: [] as TaskListRow[], retry: 0, category: [] as (string | null)[] };
   const Host = defineComponent({
     setup() {
@@ -96,8 +116,10 @@ function mountList(initial: Partial<{ rows: TaskListRow[]; loading: boolean; err
         h(TaskList, {
           rows: state.rows,
           loading: state.loading,
+          refetching: state.refetching,
+          dim: state.dim,
           error: state.error,
-          scopeLabel: "Week 42, 2026",
+          scopeLabel: state.scopeLabel,
           category: state.category,
           onOpen: (row: TaskListRow) => events.open.push(row),
           onRetry: () => (events.retry += 1),
@@ -117,9 +139,16 @@ const rowTitles = (root: FakeNode) => taskRows(root).map((tr) => textOf(findAll(
 const buttonByText = (root: FakeNode, text: string) =>
   findAll(root, byTag("button")).find((b) => textOf(b) === text || textOf(b).startsWith(text))!;
 
+const settle = async () => {
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+};
+const fmt = (n: number) => new Intl.NumberFormat().format(n);
+const statusTexts = (root: FakeNode) => findAll(root, (n) => n.props.role === "status").map(textOf);
+
 beforeEach(() => {
   (printState as { active: boolean }).active = false;
   chartOptions.current = null;
+  fakeFocus.current = null;
 });
 
 describe(`TaskList (${TEST_ZONE})`, () => {
@@ -127,8 +156,8 @@ describe(`TaskList (${TEST_ZONE})`, () => {
     const { container, unmount } = mountList({ rows: SAMPLE() });
     const dayHeaders = findAll(container, byClass("day-row__cell"));
     expect(dayHeaders.map(textOf)).toEqual([
-      `${formatDate(DAY, "full")} 2 tasks · 4h 30m`,
-      `${formatDate(addDays(DAY, 1), "full")} 2 tasks · 45m`,
+      `${formatDate(DAY, "full")} , 2 tasks · 4h 30m`,
+      `${formatDate(addDays(DAY, 1), "full")} , 2 tasks · 45m`,
     ]);
     expect(dayHeaders.every((th) => th.props.scope === "rowgroup")).toBe(true);
     expect(rowTitles(container)).toEqual(["Deep work", "Night shift", "Run", "Standup"]);
@@ -139,11 +168,11 @@ describe(`TaskList (${TEST_ZONE})`, () => {
     expect(findAll(taskRows(container)[0]!, byClass("end-marker"))).toHaveLength(0);
 
     const cells = (tr: FakeNode, cls: string) => textOf(findAll(tr, byClass(cls))[0]!);
-    expect(cells(taskRows(container)[0]!, "cell-template")).toBe("Template: Morning run");
-    expect(cells(taskRows(container)[2]!, "cell-template")).toBe("Template: Deleted template");
-    expect(cells(taskRows(container)[3]!, "cell-template")).toBe("Template: —");
+    expect(cells(taskRows(container)[0]!, "cell-template")).toBe("Morning run");
+    expect(cells(taskRows(container)[2]!, "cell-template")).toBe("Deleted template");
+    expect(cells(taskRows(container)[3]!, "cell-template")).toBe("—");
     expect(cells(taskRows(container)[2]!, "cell-category")).toBe("Gym");
-    expect(cells(taskRows(container)[0]!, "cell-created")).toBe("Created by You");
+    expect(cells(taskRows(container)[0]!, "cell-created")).toBe("You");
     expect(cells(taskRows(container)[0]!, "cell-duration")).toBe("1h 30m");
 
     // No organization tasks → no Organization column.
@@ -168,7 +197,7 @@ describe(`TaskList (${TEST_ZONE})`, () => {
     const assigned = taskRows(container)[1]!;
     expect(textOf(findAll(assigned, byClass("cell-category"))[0]!)).toBe("Acme");
     expect(textOf(findAll(assigned, byClass("cell-org"))[0]!)).toBe("Acme");
-    expect(textOf(findAll(assigned, byClass("cell-created"))[0]!)).toBe("Created by Ada Admin");
+    expect(textOf(findAll(assigned, byClass("cell-created"))[0]!)).toBe("Ada Admin");
     expect(findAll(container, byClass("day-row__cell"))[0]!.props.colspan).toBe(7);
     unmount();
   });
@@ -236,6 +265,9 @@ describe(`TaskList (${TEST_ZONE})`, () => {
 
     await fire(buttonByText(container, "Show 100 more"), "click");
     expect(taskRows(container)).toHaveLength(200);
+    // Keyboard users continue where the new rows start.
+    expect(textOf(fakeFocus.current!)).toBe("t100");
+    expect(hasClass(fakeFocus.current!, "title-button")).toBe(true);
     await fire(buttonByText(container, "Show 50 more"), "click");
     expect(taskRows(container)).toHaveLength(250);
     expect(findAll(container, byClass("more"))).toHaveLength(0);
@@ -264,6 +296,86 @@ describe(`TaskList (${TEST_ZONE})`, () => {
     await fire(buttonByText(failed.container, "Try again"), "click");
     expect(failed.events.retry).toBe(1);
     failed.unmount();
+  });
+
+  it("groups large counts like the KPIs (5,003); paper stops at 5,000 rows with the PDF's note", async () => {
+    const tasks: Task[] = [];
+    for (let i = 0; i < 5003; i++) {
+      const minutes = 8 * 60 + (i % 20) * 30;
+      const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+      tasks.push(task(`t${String(i).padStart(4, "0")}`, addDays("2026-01-05", Math.floor(i / 20)), time, 0.25));
+    }
+    const rows = rowsOf(tasks);
+    const total = formatDuration(5003 * 0.25);
+
+    const onScreen = mountList({ rows });
+    expect(textOf(findAll(onScreen.container, byClass("ui-card__caption"))[0]!)).toBe(`${fmt(5003)} tasks · ${total}`);
+    expect(textOf(findAll(onScreen.container, byClass("more__status"))[0]!)).toBe(`Showing 100 of ${fmt(5003)} tasks`);
+    expect(textOf(findAll(onScreen.container, byClass("total-row"))[0]!)).toBe(`Total ${total} ${fmt(5003)} tasks`);
+    expect(findAll(onScreen.container, byClass("chip")).map(textOf)).toEqual(["All", `Work ${fmt(5003)}`]);
+    expect(fmt(5003)).not.toBe("5003"); // the test locale groups thousands
+    onScreen.unmount();
+
+    (printState as { active: boolean }).active = true;
+    const printed = mountList({ rows });
+    expect(taskRows(printed.container)).toHaveLength(5000);
+    expect(textOf(findAll(printed.container, byClass("print-cap-note"))[0]!)).toBe(
+      `Showing the first ${fmt(5000)} of ${fmt(5003)} tasks — use Task list (CSV) for the complete list.`
+    );
+    // The grand total still covers every task (like the PDF's).
+    expect(textOf(findAll(printed.container, byClass("total-row"))[0]!)).toBe(`Total ${total} ${fmt(5003)} tasks`);
+    printed.unmount();
+
+    const small = mountList({ rows: SAMPLE() });
+    expect(findAll(small.container, byClass("print-cap-note"))).toHaveLength(0);
+    small.unmount();
+  });
+
+  it("after Retry, focus goes to the first task once loaded (never to <body>)", async () => {
+    const { container, state, unmount } = mountList({ error: "Network Error" });
+    await fire(buttonByText(container, "Try again"), "click");
+    state.error = "Still offline"; // the retry failed: focus stays on "Try again"
+    await settle();
+    expect(fakeFocus.current).toBeNull();
+
+    state.error = null;
+    state.rows = SAMPLE();
+    await settle();
+    expect(hasClass(fakeFocus.current!, "title-button")).toBe(true);
+    expect(textOf(fakeFocus.current!)).toBe("Deep work");
+    unmount();
+
+    // Nothing in the range: the card itself (labelled "Tasks") takes focus.
+    const empty = mountList({ error: "Network Error" });
+    await fire(buttonByText(empty.container, "Try again"), "click");
+    empty.state.error = null;
+    await settle();
+    expect(fakeFocus.current?.tag).toBe("section");
+    expect(hasClass(fakeFocus.current!, "task-list")).toBe(true);
+    empty.unmount();
+  });
+
+  it("while a new range loads, the captions describe the rows on screen and say Updating…", async () => {
+    const { container, state, unmount } = mountList({ rows: SAMPLE(), refetching: true, scopeLabel: "Week 41, 2026" });
+    const caption = () => textOf(findAll(container, byClass("ui-card__caption"))[0]!);
+    const tableCaption = () => textOf(findAll(container, byTag("caption"))[0]!);
+    const body = () => findAll(container, byClass("task-list__body"))[0]!;
+    expect(caption()).toBe("Updating… still showing Week 41, 2026");
+    expect(tableCaption()).toBe("Tasks, Week 41, 2026, updating");
+    expect(statusTexts(container)).toContain("Updating tasks");
+    expect(hasClass(body(), "is-refetching")).toBe(true);
+
+    state.dim = false; // the whole page is dimmed already
+    await settle();
+    expect(hasClass(body(), "is-refetching")).toBe(false);
+
+    state.refetching = false;
+    state.scopeLabel = "Week 42, 2026";
+    await settle();
+    expect(caption()).toBe("4 tasks · 5h 15m");
+    expect(tableCaption()).toBe("Tasks, Week 42, 2026");
+    expect(statusTexts(container)).not.toContain("Updating tasks");
+    unmount();
   });
 
   it("is an accessible table: caption, column headers, row headers", () => {

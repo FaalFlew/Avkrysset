@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/types";
-import { CSV_BOM, csvFormatForLocale } from "../analyticsCsv";
+import { CSV_BOM } from "../analyticsCsv";
 import {
   TASK_CSV_HEADER,
   buildTaskListCsv,
@@ -19,8 +19,9 @@ import { buildTaskListRows } from "../taskList";
 import { addDays, combineDateAndTime, endInstant, formatWeekdayLong, getActiveTimeZone } from "../datetime";
 import { TEST_ZONE, assertZoneApplied } from "./tz";
 
-const EN = csvFormatForLocale("en-US");
-const NB = csvFormatForLocale("nb-NO");
+/** The CSV's one locale: delimiter, decimal and weekday names all follow it. */
+const EN = "en-US";
+const NB = "nb-NO";
 const META = {
   rangeLabel: "Week 42 · Oct 12 – 18, 2026",
   timeZoneLabel: "Europe/Oslo (UTC+02:00)",
@@ -54,7 +55,8 @@ describe(`task list CSV (${TEST_ZONE})`, () => {
   });
 
   it("en-US: BOM, CRLF, metadata, header and rows in list order", () => {
-    const wed = formatWeekdayLong(DAY);
+    const wed = formatWeekdayLong(DAY, EN);
+    expect(wed).toBe("Wednesday");
     const csv = buildTaskListCsv(
       [
         row("Late shift", "23:30", 2, { template: "Deleted template" }),
@@ -89,7 +91,8 @@ describe(`task list CSV (${TEST_ZONE})`, () => {
       { ...META, rangeLabel: "Weeks 1–53 · Dec 29, 2025 – Jan 3, 2027" },
       NB
     );
-    const wed = formatWeekdayLong(DAY);
+    const wed = formatWeekdayLong(DAY, NB);
+    expect(wed).toBe("onsdag"); // the CSV's locale, not the display locale
     const out = lines(csv);
     expect(out[1]).toBe("# Range: Weeks 1–53 · Dec 29, 2025 – Jan 3, 2027"); // no ';' → unquoted
     expect(out[4]).toBe(
@@ -105,6 +108,18 @@ describe(`task list CSV (${TEST_ZONE})`, () => {
     }, EN));
     expect(en[1]).toBe('"# Range: Weeks 1–53 · Dec 29, 2025 – Jan 3, 2027"');
     expect(en[5]).toContain(',"Lunch, team",Work,,,You,"Kari, Ola",');
+  });
+
+  it("weekday names follow the CSV's locale, whatever the display locale is", () => {
+    const nb = lines(buildTaskListCsv([row("A", "09:00", 1)], META, "nb-NO"));
+    expect(nb[5]!.split(";")[1]).toBe("onsdag");
+    const de = lines(buildTaskListCsv([row("A", "09:00", 1)], META, "de-DE"));
+    expect(de[5]!.split(";").slice(0, 2)).toEqual(["2026-10-14", "Mittwoch"]);
+    const gb = lines(buildTaskListCsv([row("A", "09:00", 1)], META, "en-GB"));
+    expect(gb[5]!.split(",").slice(0, 2)).toEqual(["2026-10-14", "Wednesday"]);
+    // An unknown tag falls back to ',' + '.' and the display locale's names (never throws).
+    const bad = lines(buildTaskListCsv([row("A", "09:00", 1)], META, "not a locale!"));
+    expect(bad[5]!.split(",")[1]).toBe(formatWeekdayLong(DAY));
   });
 
   it("guards formulas and quotes quotes and line breaks", () => {

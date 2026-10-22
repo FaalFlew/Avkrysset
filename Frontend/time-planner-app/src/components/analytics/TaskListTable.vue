@@ -1,12 +1,11 @@
 <script setup lang="ts">
 /**
- * TaskListTable — the rows of the analytics task list: one <tbody> per day (a row-group header
- * with the day's subtotal), a task row per task and the grand total in <tfoot>.
- * Wide cards (≥ 760px of card width, and always on paper): a table with a sticky column header
- * (repeated on every printed page). Narrow cards (phones, small tablets): every row becomes a card
- * (title + duration, time, then category · template · organization · creator).
- * A row opens its task: the title is a button (Enter/Space), and a click anywhere on the row
- * does the same (unless the user is selecting text).
+ * TaskListTable — the analytics task list as a table (wide cards, and always on paper): one
+ * <tbody> per day (a row-group header with the day's subtotal), a task row per task and the
+ * grand total in <tfoot>. The column header is sticky on screen and repeats on every printed
+ * page. Narrow cards render TaskListCards instead (semantic list markup).
+ * A row opens its task: the title is a button (Enter/Space), and a click anywhere on the row does
+ * the same (unless the user is selecting text).
  * Props:
  *   days: TaskListPageDay[] — the day groups on the current page (subtotals cover the whole day)
  *   caption: string — accessible table caption
@@ -15,12 +14,13 @@
  *   allCount: number — tasks in the range (shown next to the count when filtered)
  *   filtered: boolean
  * Emits: open(row)
+ * Exposes: focusRow(id) — move focus to a row's title button
  */
 import { computed } from "vue";
 import { formatDate, formatTimeRange } from "@/lib/datetime";
-import { formatDuration, pluralize } from "@/lib/format";
-import { taskEndDayOffset } from "@/lib/plannerFormat";
+import { formatDuration } from "@/lib/format";
 import type { TaskListPageDay, TaskListRow, TaskListTotals } from "@/lib/taskList";
+import { daySummary, endMarker, isRowActivation, totalCountText } from "./taskListView";
 
 const props = defineProps<{
   days: TaskListPageDay[];
@@ -34,33 +34,25 @@ const props = defineProps<{
 const emit = defineEmits<{ open: [row: TaskListRow] }>();
 
 const columnCount = computed(() => (props.showOrganization ? 7 : 6));
+const countText = computed(() => totalCountText(props.totals.count, props.allCount, props.filtered));
 
-/** "+1d" and how a screen reader says it ("ends the next day"). */
-function endMarker(row: TaskListRow): { text: string; spoken: string } | null {
-  const days = taskEndDayOffset(row.start, row.hours);
-  if (days <= 0) return null;
-  return { text: `+${days}d`, spoken: days === 1 ? "ends the next day" : `ends ${days} days later` };
+const buttons = new Map<string, { focus: () => void }>();
+function setButton(id: string, el: unknown): void {
+  if (el) buttons.set(id, el as { focus: () => void });
+  else buttons.delete(id);
 }
-
-const dayHeaderId = (day: TaskListPageDay) => `task-day-${day.dateKey}`;
-
-function daySummary(day: TaskListPageDay): string {
-  return `${pluralize(day.count, "task")} · ${formatDuration(day.hours)}`;
-}
-
-const countText = computed(() =>
-  props.filtered
-    ? `${props.totals.count} of ${pluralize(props.allCount, "task")}`
-    : pluralize(props.totals.count, "task")
-);
 
 function onRowClick(event: MouseEvent, row: TaskListRow): void {
-  // Selecting a title to copy it is not a click on the row.
-  const selection = typeof window !== "undefined" ? window.getSelection?.()?.toString() : "";
-  const onButton = (event.target as HTMLElement | null)?.closest?.("button");
-  if (selection && !onButton) return;
-  emit("open", row);
+  if (isRowActivation(event)) emit("open", row);
 }
+
+defineExpose({
+  focusRow: (id: string) => {
+    const button = buttons.get(id);
+    button?.focus();
+    return !!button;
+  },
+});
 </script>
 
 <template>
@@ -80,9 +72,10 @@ function onRowClick(event: MouseEvent, row: TaskListRow): void {
 
     <tbody v-for="day in days" :key="day.dateKey" class="day">
       <tr class="day-row">
-        <th :id="dayHeaderId(day)" :colspan="columnCount" scope="rowgroup" class="day-row__cell">
+        <th :colspan="columnCount" scope="rowgroup" class="day-row__cell">
           <span class="day-row__inner">
             <span class="day-row__date">{{ formatDate(day.dateKey, "full") }}</span>
+            <span class="sr-only">, </span>
             <span class="day-row__total">{{ daySummary(day) }}</span>
           </span>
         </th>
@@ -103,7 +96,14 @@ function onRowClick(event: MouseEvent, row: TaskListRow): void {
         </td>
         <td class="col-duration cell-duration is-end">{{ formatDuration(row.hours) }}</td>
         <th scope="row" class="col-title cell-title">
-          <button type="button" class="title-button" aria-haspopup="dialog">{{ row.label }}</button>
+          <button
+            :ref="(el) => setButton(row.id, el)"
+            type="button"
+            class="title-button"
+            aria-haspopup="dialog"
+          >
+            {{ row.label }}
+          </button>
         </th>
         <td class="col-category cell-category">
           <span class="category">
@@ -119,14 +119,12 @@ function onRowClick(event: MouseEvent, row: TaskListRow): void {
           class="col-template cell-template"
           :class="{ 'is-empty': !row.templateTitle, 'is-deleted': row.templateDeleted }"
         >
-          <span class="card-label">Template: </span>{{ row.templateTitle ?? "—" }}
+          {{ row.templateTitle ?? "—" }}
         </td>
         <td v-if="showOrganization" class="col-org cell-org" :class="{ 'is-empty': !row.organizationName }">
           {{ row.organizationName ?? "—" }}
         </td>
-        <td class="col-created cell-created">
-          <span class="card-label">Created by </span>{{ row.createdBy }}
-        </td>
+        <td class="col-created cell-created">{{ row.createdBy }}</td>
       </tr>
     </tbody>
 
@@ -319,11 +317,6 @@ thead th {
   font-style: italic;
 }
 
-/* Labels only cards show (the column header names them in the table). */
-.card-label {
-  display: none;
-}
-
 /* ---------- Grand total ---------- */
 .total-row > * {
   padding-top: var(--space-2-5);
@@ -331,117 +324,6 @@ thead th {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-/* ---------- Narrow card: rows become cards (screens only; paper always gets the table) ---------- */
-@media screen {
-  @container tasklist (max-width: 759.98px) {
-    .task-table,
-    .task-table tbody,
-    .task-table tfoot {
-      display: block;
-    }
-    .task-table thead {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-    }
-    .day-row,
-    .day-row__cell {
-      display: block;
-    }
-    .day-row__cell {
-      padding: var(--space-4) 0 var(--space-1-5);
-    }
-    .day:first-of-type .day-row__cell {
-      padding-top: var(--space-1);
-    }
-
-    .task-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      column-gap: var(--space-3);
-      row-gap: var(--space-1);
-      padding: var(--space-2-5) var(--space-2);
-      margin: 0 calc(-1 * var(--space-2));
-      border-bottom: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-    }
-    .task-row > *,
-    .total-row > * {
-      display: block;
-      width: auto;
-      min-width: 0;
-      padding: 0;
-      border-bottom: none;
-    }
-    .day:last-of-type .task-row:last-child {
-      border-bottom-color: var(--border-default);
-    }
-    .cell-title {
-      order: 1;
-      flex: 1 1 0;
-      min-width: 0;
-    }
-    .cell-duration {
-      order: 2;
-      flex: none;
-      font-weight: var(--fw-medium);
-      color: var(--text-primary);
-    }
-    .cell-time {
-      order: 3;
-      flex: 0 0 100%;
-    }
-    .cell-category,
-    .cell-template,
-    .cell-org,
-    .cell-created {
-      order: 4;
-      flex: 0 1 auto;
-      min-width: 0;
-      font-size: var(--fs-12);
-      line-height: var(--lh-12);
-    }
-    .cell-template.is-empty,
-    .cell-org.is-empty {
-      display: none;
-    }
-    .card-label {
-      display: inline;
-    }
-    .title-button {
-      font-size: var(--fs-14);
-      line-height: var(--lh-14);
-    }
-
-    .total-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      column-gap: var(--space-2);
-      padding: var(--space-3) 0 0;
-    }
-    .total-row__count {
-      order: -1;
-      flex: 1 1 auto;
-      font-weight: var(--fw-regular);
-      color: var(--text-secondary);
-    }
-    .total-row > th {
-      display: none;
-    }
-  }
-}
-
-/* Touch: the title button is the row's control; the whole card row is the tap target. */
-@media (pointer: coarse) {
-  .task-row {
-    min-height: 44px;
-  }
 }
 
 /* ---------- Paper ---------- */
@@ -472,9 +354,6 @@ thead th {
   .task-row:hover,
   .task-row:focus-within {
     background: none;
-  }
-  .end-marker {
-    font-size: var(--fs-11);
   }
 }
 </style>

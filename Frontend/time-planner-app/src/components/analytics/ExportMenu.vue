@@ -94,7 +94,6 @@ function exportGuestTaskCsv(): void {
   if (!props.snapshot) return;
   const selection = props.snapshot.selection;
   exporter.downloadGuestTaskCsv(props.taskRows, selection, {
-    rangeLabel: props.rangeLabel,
     timeZoneLabel: formatZoneLabelForRange(analyticsRange(selection)),
     generatedAt: csvGeneratedAt(now()),
   });

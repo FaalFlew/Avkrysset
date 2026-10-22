@@ -4,7 +4,9 @@
 //
 //   - UTF-8 with BOM, CRLF line endings, RFC 4180 quoting, formula-injection guard, and the
 //     locale-aware delimiter/decimal of the analytics CSV (src/lib/analyticsCsv.ts: `;` + `,` for
-//     comma-decimal locales such as nb-NO, else `,` + `.`).
+//     comma-decimal locales such as nb-NO, else `,` + `.`). ONE locale drives the file: the
+//     delimiter/decimal and the localized text (Weekday; the range label is built by the caller in
+//     the same locale), like the server's `locale` parameter.
 //   - Metadata rows: "# Time Planner task list export", "# Range: …", "# Time zone: …",
 //     "# Generated: yyyy-MM-dd HH:mm (<zone>)" (+ "# Document ID: …" from the server only).
 //   - Header: Date,Weekday,Start,End,End date,Duration (h),Duration,Title,Category,Template,
@@ -20,12 +22,12 @@
 
 import {
   csvDocument,
+  csvFormatForLocale,
   csvMetaLine,
   csvNum,
   csvRow,
   csvText,
   formatCsvNumber,
-  type CsvNumberFormat,
 } from "@/lib/analyticsCsv";
 import {
   formatWeekdayLong,
@@ -95,13 +97,12 @@ export function csvGeneratedAt(at: InstantInput): string {
   return `${csvLocalDateTime(at)} (${getActiveTimeZone()})`;
 }
 
-/** The complete CSV text, starting with the BOM. */
-export function buildTaskListCsv(
-  rows: readonly TaskListCsvRow[],
-  meta: TaskListCsvMeta,
-  format: CsvNumberFormat
-): string {
-  const { delimiter, decimal } = format;
+/**
+ * The complete CSV text, starting with the BOM. `locale` (BCP-47, e.g. the browser's "nb-NO")
+ * decides the delimiter, the decimal separator and the weekday names.
+ */
+export function buildTaskListCsv(rows: readonly TaskListCsvRow[], meta: TaskListCsvMeta, locale: string): string {
+  const { delimiter, decimal } = csvFormatForLocale(locale);
   const lines: string[] = [];
   const metaLine = (line: string) => lines.push(csvMetaLine(line, delimiter));
 
@@ -120,7 +121,7 @@ export function buildTaskListCsv(
       csvRow(
         [
           csvNum(start.date),
-          csvText(formatWeekdayLong(start.date)),
+          csvText(formatWeekdayLong(start.date, locale)),
           csvNum(start.time),
           csvNum(end.time),
           csvNum(end.date),

@@ -156,7 +156,8 @@ const taskList = useAnalyticsTasks({
   onTasksChanged: () => void stats.refetch(),
 });
 const { rows: taskRows, isLoading: tasksLoading, isRefetching: tasksRefetching, error: tasksError } = taskList;
-// (While the whole page refetches, the content is dimmed already: the list doesn't dim twice.)
+/** Range of the rows on screen (they lag the filters while the list refetches). */
+const taskScopeLabel = computed(() => selectionShortLabel(taskList.selection.value ?? currentSelection.value));
 
 /** The task list's category filter (chips, or a click in the donut). */
 const categoryFilter = ref<string | null>(null);
@@ -180,7 +181,8 @@ function openTask(row: TaskListRow): void {
   // Signed in, the store only holds the planner's week: make the task known to it so the
   // editor's Delete (with Undo) works from here too. Guests hold every task already.
   if (auth.isAuthenticated) taskStore.replaceTaskLocally(row.task);
-  editor.openEdit(row.task);
+  // Read-only org tasks show the list's grouping (the organization), not the creator's category.
+  editor.openEdit(row.task, null, { category: row.category });
 }
 
 // --- Print ("Print / Save as PDF" and the browser's own Print) ------------------------------
@@ -322,9 +324,10 @@ const liveMessage = computed(() => {
             v-model:category="categoryFilter"
             :rows="taskRows"
             :loading="tasksLoading"
-            :refetching="tasksRefetching && !isRefetching"
+            :refetching="tasksRefetching"
+            :dim="tasksRefetching && !isRefetching"
             :error="tasksError"
-            :scope-label="scopeLabel"
+            :scope-label="taskScopeLabel"
             @open="openTask"
             @retry="taskList.refetch()"
           />

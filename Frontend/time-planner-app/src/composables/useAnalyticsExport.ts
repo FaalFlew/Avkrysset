@@ -9,7 +9,8 @@
 // Printing is handled by usePrintMode.
 
 import { computed, getCurrentScope, onScopeDispose, readonly, ref } from "vue";
-import type { AnalyticsSelection } from "@/lib/analyticsBuckets";
+import { analyticsBuckets, type AnalyticsSelection } from "@/lib/analyticsBuckets";
+import { selectionSummary } from "@/components/analytics/format";
 import type { AnalyticsSnapshot } from "@/composables/useStats";
 import { readBlobError } from "@/lib/apiErrors";
 import {
@@ -199,14 +200,19 @@ export function useAnalyticsExport(options: UseAnalyticsExportOptions) {
     }
   }
 
-  /** Guest task list CSV: built from the local tasks of the range and saved right away. */
+  /**
+   * Guest task list CSV: built from the local tasks of the range and saved right away. Everything
+   * localized in it (delimiter, decimal, weekday names, the range label) follows deps.locale().
+   */
   function downloadGuestTaskCsv(
     rows: readonly TaskListRow[],
     selection: AnalyticsSelection,
-    meta: TaskListCsvMeta
+    meta: Omit<TaskListCsvMeta, "rangeLabel">
   ): boolean {
     try {
-      const csv = buildTaskListCsv(taskListCsvRows(rows), meta, csvFormatForLocale(deps.locale()));
+      const locale = deps.locale();
+      const rangeLabel = selectionSummary(selection, analyticsBuckets(selection).length, locale);
+      const csv = buildTaskListCsv(taskListCsvRows(rows), { ...meta, rangeLabel }, locale);
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       deps.save(blob, `${reportFileStem(selection, TASKS_FILE_PREFIX)}.csv`);
       format.value = "tasks-csv";

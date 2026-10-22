@@ -3,21 +3,25 @@
  * TaskList — the "Tasks" card at the bottom of the analytics page: every task of the range,
  * grouped by day (local date of the start) with subtotals and a grand total that equals the KPIs.
  * Search (title) and a category filter (chips; the donut sets it too) narrow the list; 100 rows
- * show at a time ("Show more"); printing shows every matching row (with a note when filtered).
+ * show at a time ("Show more"); printing shows every matching row up to 5,000 (like the PDF, with
+ * its note), plus a note when filtered. Wide cards (and paper) get a table, narrow cards a list of
+ * cards (TaskListCards). While a new range loads, the previous rows stay (dimmed) and the caption
+ * says "Updating…" and which range is still shown.
  * Props:
  *   rows: TaskListRow[] — every task of the range, in list order (src/lib/taskList.ts)
  *   loading?: boolean — first load (skeleton)
  *   refetching?: boolean — previous rows on screen while a new range loads
+ *   dim?: boolean — dim the stale rows (default: refetching; off while the whole page is dimmed)
  *   error?: string | null — the last load failed (error state with Retry)
- *   scopeLabel: string — range label for the caption ("Jan – Dec 2026")
+ *   scopeLabel: string — range label of the rows ON SCREEN ("Jan – Dec 2026")
  *   category: string | null — v-model:category, the category filter (analytics category id)
  * Emits: open(row) (open the task in the editor), retry(), update:category(id | null)
  * Exposes: reveal() — scroll the card into view and move focus to it (after a donut click)
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ListTodo, Search, SearchX, X } from "lucide-vue-next";
 import { UiButton, UiCard, UiEmptyState, UiErrorState, UiIconButton, UiInput, UiSkeleton, UiSpinner } from "@/components/ui";
-import { formatDuration, pluralize } from "@/lib/format";
+import { formatCount, formatDuration, pluralize } from "@/lib/format";
 import {
   TASK_LIST_PAGE_SIZE,
   filterTaskListRows,
@@ -31,17 +35,20 @@ import {
 import { printState } from "@/composables/usePrintMode";
 import { useBreakpoint } from "@/composables/useMediaQuery";
 import TaskListTable from "./TaskListTable.vue";
+import TaskListCards from "./TaskListCards.vue";
+import { PRINT_ROW_CAP, taskListLayout } from "./taskListView";
 
 const props = withDefaults(
   defineProps<{
     rows: TaskListRow[];
     loading?: boolean;
     refetching?: boolean;
+    dim?: boolean;
     error?: string | null;
     scopeLabel: string;
     category: string | null;
   }>(),
-  { loading: false, refetching: false, error: null }
+  { loading: false, refetching: false, dim: undefined, error: null }
 );
 
 const emit = defineEmits<{
@@ -61,11 +68,15 @@ const allTotals = computed(() => taskListTotals(props.rows));
 const matchingTotals = computed(() => taskListTotals(matching.value));
 const days = computed(() => groupTaskListRows(matching.value));
 
-/** Paper shows every matching row; screens page by TASK_LIST_PAGE_SIZE. */
+/** Paper shows the matching rows up to PRINT_ROW_CAP (like the PDF); screens page by TASK_LIST_PAGE_SIZE. */
 const printing = computed(() => printState.active);
-const pageDays = computed(() => pageTaskListDays(days.value, printing.value ? Infinity : limit.value));
-const shownCount = computed(() => Math.min(matching.value.length, printing.value ? Infinity : limit.value));
+const rowLimit = computed(() => (printing.value ? PRINT_ROW_CAP : limit.value));
+const pageDays = computed(() => pageTaskListDays(days.value, rowLimit.value));
+const shownCount = computed(() => Math.min(matching.value.length, rowLimit.value));
 const remaining = computed(() => matching.value.length - shownCount.value);
+/** More matching rows than paper shows: the note points to the CSV for the complete list. */
+const overPrintCap = computed(() => matching.value.length > PRINT_ROW_CAP);
+const dimmed = computed(() => props.dim ?? props.refetching);
 
 const showOrganization = computed(() => props.rows.some((row) => !!row.organizationName));
 const chips = computed(() => taskListCategories(props.rows));
@@ -87,13 +98,17 @@ const state = computed<State>(() => {
   return "ready";
 });
 
+/** Describes the rows on screen: their totals, or (while a new range loads) which range they are. */
 const caption = computed(() => {
-  const totals = `${pluralize(allTotals.value.count, "task")} · ${formatDuration(allTotals.value.hours)}`;
-  return state.value === "ready" || state.value === "no-match" ? totals : undefined;
+  if (state.value !== "ready" && state.value !== "no-match") return undefined;
+  if (props.refetching) return `Updating… still showing ${props.scopeLabel}`;
+  return `${pluralize(allTotals.value.count, "task")} · ${formatDuration(allTotals.value.hours)}`;
 });
 
 const tableCaption = computed(
-  () => `Tasks, ${props.scopeLabel}${filtered.value ? ` (filtered: ${filterDescription.value})` : ""}`
+  () =>
+    `Tasks, ${props.scopeLabel}${filtered.value ? ` (filtered: ${filterDescription.value})` : ""}` +
+    (props.refetching ? ", updating" : "")
 );
 
 const selectedChip = computed(() => chips.value.find((c) => c.id === props.category) ?? null);
@@ -107,11 +122,12 @@ const filterDescription = computed(() => {
   return parts.join(" · ");
 });
 
-/** Polite announcement of the filter result (screen readers). */
+/** Polite announcement of the filter result and of updates (screen readers). */
 const liveText = computed(() => {
+  if (props.refetching && (state.value === "ready" || state.value === "no-match")) return "Updating tasks";
   if (state.value === "no-match") return "No tasks match the filters";
   if (state.value !== "ready" || !filtered.value) return "";
-  return `${matching.value.length} of ${pluralize(props.rows.length, "task")} shown`;
+  return `${formatCount(matching.value.length)} of ${pluralize(props.rows.length, "task")} shown`;
 });
 
 function selectCategory(id: string | null): void {
@@ -123,25 +139,68 @@ function clearFilters(): void {
   emit("update:category", null);
 }
 
+const listRef = ref<{ focusRow: (id: string) => boolean } | null>(null);
+
 async function showMore(): Promise<void> {
-  const firstNew = shownCount.value;
+  const firstNew = matching.value[shownCount.value];
   limit.value += TASK_LIST_PAGE_SIZE;
-  pageAnnouncement.value = `Showing ${shownCount.value} of ${pluralize(matching.value.length, "task")}`;
-  // Keep keyboard users in place: focus the first newly shown task (rows render in list order).
+  pageAnnouncement.value = `Showing ${formatCount(shownCount.value)} of ${pluralize(matching.value.length, "task")}`;
+  // Keep keyboard users in place: focus the first newly shown task.
   await nextTick();
-  root.value?.querySelectorAll?.<HTMLButtonElement>(".task-row .title-button")[firstNew]?.focus();
+  if (firstNew) listRef.value?.focusRow(firstNew.id);
 }
 
 const cardRef = ref<InstanceType<typeof UiCard> | null>(null);
 const root = computed<HTMLElement | null>(() => (cardRef.value?.$el as HTMLElement | undefined) ?? null);
-const { prefersReducedMotion } = useBreakpoint();
+const { isMobile, prefersReducedMotion } = useBreakpoint();
+
+function focusCard(): void {
+  root.value?.focus?.({ preventScroll: true });
+}
+
+// --- Layout: the card's own width decides (phones are narrow from the first render) ----------
+const cardWidth = ref<number | null>(null);
+let resizeObserver: ResizeObserver | null = null;
+onMounted(() => {
+  const el = root.value;
+  if (!el || typeof ResizeObserver === "undefined") return;
+  resizeObserver = new ResizeObserver((entries) => {
+    const width = entries[entries.length - 1]?.contentRect.width;
+    if (typeof width === "number") cardWidth.value = width;
+  });
+  resizeObserver.observe(el);
+});
+onBeforeUnmount(() => resizeObserver?.disconnect());
+
+const layout = computed(() =>
+  taskListLayout({ printing: printing.value, cardWidth: cardWidth.value, isMobile: isMobile.value })
+);
+
+// --- Retry: focus must not fall back to <body> when the error state goes away -----------------
+let focusAfterRetry = false;
+function onRetry(): void {
+  focusAfterRetry = true;
+  emit("retry");
+}
+watch(
+  state,
+  async (now) => {
+    if (!focusAfterRetry || now === "error") return; // a failed retry keeps focus on "Try again"
+    focusAfterRetry = false;
+    await nextTick();
+    // Loaded: the first task; otherwise (still loading, empty, no match) the card itself.
+    const first = now === "ready" ? matching.value[0] : undefined;
+    if (!first || !listRef.value?.focusRow(first.id)) focusCard();
+  },
+  { flush: "post" }
+);
 
 /** Bring the list into view (a category was picked in the donut) and move focus to it. */
 function reveal(): void {
   const el = root.value;
   if (!el) return;
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ behavior: prefersReducedMotion.value ? "auto" : "smooth", block: "start" });
+  focusCard();
+  el.scrollIntoView?.({ behavior: prefersReducedMotion.value ? "auto" : "smooth", block: "start" });
 }
 
 defineExpose({ reveal });
@@ -155,6 +214,7 @@ defineExpose({ reveal });
     class="task-list"
     tabindex="-1"
     :aria-busy="loading || refetching || undefined"
+    :data-layout="layout"
   >
     <template #actions>
       <UiSpinner v-if="refetching" :size="14" />
@@ -209,7 +269,7 @@ defineExpose({ reveal });
             aria-hidden="true"
           ></span>
           <span class="chip__name">{{ chip.name }}</span>
-          <span class="chip__count">{{ chip.count }}</span>
+          <span class="chip__count">{{ formatCount(chip.count) }}</span>
         </button>
       </div>
 
@@ -220,7 +280,11 @@ defineExpose({ reveal });
     </div>
 
     <p v-if="filtered && state === 'ready'" class="print-note print-only">
-      Filtered: {{ filterDescription }} — {{ matching.length }} of {{ pluralize(rows.length, "task") }}
+      Filtered: {{ filterDescription }} — {{ formatCount(matching.length) }} of {{ pluralize(rows.length, "task") }}
+    </p>
+    <p v-if="overPrintCap && state === 'ready'" class="print-note print-cap-note print-only">
+      Showing the first {{ formatCount(PRINT_ROW_CAP) }} of {{ pluralize(matching.length, "task") }} — use Task list
+      (CSV) for the complete list.
     </p>
 
     <div v-if="state === 'loading'" class="skeleton" aria-hidden="true">
@@ -241,7 +305,7 @@ defineExpose({ reveal });
       title="Couldn't load the tasks"
       description="Check your connection and try again."
       :retrying="loading || refetching"
-      @retry="emit('retry')"
+      @retry="onRetry"
     />
 
     <UiEmptyState
@@ -266,8 +330,10 @@ defineExpose({ reveal });
     </UiEmptyState>
 
     <template v-else>
-      <div class="task-list__body" :class="{ 'is-refetching': refetching }">
+      <div class="task-list__body" :class="{ 'is-refetching': dimmed }">
         <TaskListTable
+          v-if="layout === 'table'"
+          ref="listRef"
           :days="pageDays"
           :caption="tableCaption"
           :show-organization="showOrganization"
@@ -276,12 +342,21 @@ defineExpose({ reveal });
           :filtered="filtered"
           @open="emit('open', $event)"
         />
+        <TaskListCards
+          v-else
+          ref="listRef"
+          :days="pageDays"
+          :totals="matchingTotals"
+          :all-count="rows.length"
+          :filtered="filtered"
+          @open="emit('open', $event)"
+        />
       </div>
 
-      <div v-if="remaining > 0" class="more" data-print-hide>
-        <p class="more__status">Showing {{ shownCount }} of {{ pluralize(matching.length, "task") }}</p>
+      <div v-if="remaining > 0 && !printing" class="more" data-print-hide>
+        <p class="more__status">Showing {{ formatCount(shownCount) }} of {{ pluralize(matching.length, "task") }}</p>
         <UiButton variant="secondary" @click="showMore">
-          Show {{ Math.min(remaining, TASK_LIST_PAGE_SIZE) }} more
+          Show {{ formatCount(Math.min(remaining, TASK_LIST_PAGE_SIZE)) }} more
         </UiButton>
       </div>
     </template>
