@@ -54,6 +54,13 @@ calendar filtered by project (one calendar catches double-bookings across projec
 ### 6. Phase 4 prerequisite: `ReportExports.Kind` is `nvarchar(16)`
 "OrganizationTasks" (17 chars) won't fit — widen the column in Phase 4's migration or use a shorter Kind.
 
+### 7. Small pre-existing issues found during reviews — SMALL
+- Creating a category with a duplicate name returns 500 instead of a readable 409/400 (unique index violation).
+- The API logs "Confirmation email sent" even when no Postmark token is configured (nothing is sent; misleading log).
+- The CSV formula-injection guard doesn't treat a leading `\r` as dangerous (client and server).
+- Report CSVs requested without `locale` fall back to invariant labels ("2026 January – 2026 December"); the app always sends
+  `locale`, so only direct API users see it.
+
 ## Housekeeping
 - Move secrets from the deployed `appsettings.Secrets.json` to Azure App Settings (long-term, cleaner).
 - Confirm production doesn't use the old JWT secret that is visible in the public repo's early history.
