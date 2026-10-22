@@ -118,6 +118,52 @@ public static class ReportFonts
         return missing.ToList();
     }
 
+    /// <summary>
+    /// Width of a single line of <paramref name="text"/> in points, for layout decisions (no wrapping a duration, splitting an
+    /// email address after its "@"): Noto Sans advance widths for printable ASCII (read from the embedded fonts' hmtx
+    /// tables), 1 em for other characters (CJK, emoji) and 0.7 em for other letters, plus 3 % (no kerning is applied, which
+    /// only ever makes real text narrower).
+    /// </summary>
+    public static float EstimateWidth(string text, float fontSize, bool bold = false)
+    {
+        var advances = bold ? BoldAsciiAdvances : RegularAsciiAdvances;
+        var ems = 0f;
+        foreach (var c in text)
+        {
+            ems += c switch
+            {
+                >= ' ' and <= '~' => advances[c - ' '],
+                ' ' => advances[0],
+                _ when char.IsLowSurrogate(c) => 0,
+                _ when char.IsLetter(c) && c < 'ᄀ' => 0.7f,
+                _ => 1f
+            };
+        }
+
+        return ems * fontSize * 1.03f;
+    }
+
+    // Advance widths in em of U+0020 … U+007E (Noto Sans 2.015, unitsPerEm 1000).
+    private static readonly float[] RegularAsciiAdvances =
+    {
+        0.260f, 0.269f, 0.408f, 0.646f, 0.572f, 0.831f, 0.732f, 0.225f, 0.300f, 0.300f, 0.551f, 0.572f, 0.268f, 0.322f, 0.268f, 0.372f,
+        0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.268f, 0.268f, 0.572f, 0.572f, 0.572f, 0.434f,
+        0.899f, 0.639f, 0.650f, 0.632f, 0.730f, 0.556f, 0.519f, 0.728f, 0.741f, 0.339f, 0.273f, 0.619f, 0.524f, 0.907f, 0.760f, 0.781f,
+        0.605f, 0.781f, 0.622f, 0.549f, 0.556f, 0.731f, 0.600f, 0.930f, 0.586f, 0.566f, 0.572f, 0.329f, 0.372f, 0.329f, 0.572f, 0.444f,
+        0.281f, 0.561f, 0.615f, 0.480f, 0.615f, 0.564f, 0.344f, 0.615f, 0.618f, 0.258f, 0.258f, 0.534f, 0.258f, 0.935f, 0.618f, 0.605f,
+        0.615f, 0.615f, 0.413f, 0.479f, 0.361f, 0.618f, 0.508f, 0.786f, 0.529f, 0.510f, 0.470f, 0.380f, 0.551f, 0.380f, 0.572f
+    };
+
+    private static readonly float[] BoldAsciiAdvances =
+    {
+        0.260f, 0.282f, 0.479f, 0.646f, 0.572f, 0.902f, 0.750f, 0.266f, 0.339f, 0.339f, 0.542f, 0.572f, 0.285f, 0.320f, 0.281f, 0.415f,
+        0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.572f, 0.281f, 0.285f, 0.572f, 0.572f, 0.572f, 0.477f,
+        0.898f, 0.692f, 0.665f, 0.642f, 0.732f, 0.560f, 0.549f, 0.724f, 0.765f, 0.389f, 0.331f, 0.664f, 0.559f, 0.943f, 0.813f, 0.791f,
+        0.621f, 0.791f, 0.656f, 0.551f, 0.577f, 0.756f, 0.650f, 0.967f, 0.670f, 0.626f, 0.579f, 0.331f, 0.415f, 0.331f, 0.572f, 0.411f,
+        0.365f, 0.599f, 0.632f, 0.516f, 0.632f, 0.597f, 0.387f, 0.632f, 0.650f, 0.299f, 0.298f, 0.620f, 0.298f, 0.975f, 0.650f, 0.625f,
+        0.632f, 0.632f, 0.447f, 0.502f, 0.434f, 0.650f, 0.571f, 0.856f, 0.578f, 0.571f, 0.493f, 0.394f, 0.551f, 0.394f, 0.572f
+    };
+
     public static string Describe(IEnumerable<int> codePoints) =>
         string.Join(", ", codePoints.Select(c => "U+" + c.ToString("X4", CultureInfo.InvariantCulture)));
 

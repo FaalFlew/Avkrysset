@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging.Abstractions;
 using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Features.Reports;
@@ -262,14 +263,14 @@ public sealed class PdfReportSmokeTests
         using var document = PdfDocument.Open(pdf);
         Assert.True(document.NumberOfPages >= 4, $"{document.NumberOfPages} pages");
         var pages = document.GetPages().Select(page => Normalize(ContentOrderTextExtractor.GetText(page))).ToList();
-        const string header = "Time Duration Title Category Template Created by Organization";
+        const string header = "Time Duration Title Category Template Organization Created by";
 
         // From the page where the list starts, every page repeats the column header (with the Organization column).
         var first = pages.FindIndex(p => p.Contains("Tasks " + header));
         Assert.True(first >= 0, string.Join("\n", pages));
         Assert.All(pages.Skip(first), page => Assert.Contains(header, page));
         var text = string.Join(" ", pages);
-        Assert.Contains("18:00 – 02:00 +1d 8h Warehouse shift Acme Logistics — Grace Hopper Acme Logistics", text);
+        Assert.Contains("18:00 – 02:00 +1d 8h Warehouse shift Acme Logistics — Acme Logistics Grace Hopper", text);
         Assert.Contains("Item 000", text);
         Assert.Contains("Item 139", text);
         Assert.Contains("Total 78h 141 tasks · 78 h", text);
@@ -316,15 +317,59 @@ public sealed class PdfReportSmokeTests
         var pdf = Render(model, "tasks-capped.pdf");
         _output.WriteLine($"{pdf.Length} bytes in {stopwatch.ElapsedMilliseconds} ms");
 
+        const string note = "Showing the first 5,000 of 5,001 tasks — use Task list (CSV) for the complete list.";
         var text = PdfText(pdf);
-        Assert.Contains("Showing the first 5,000 of 5,001 tasks — use Task list (CSV) for the complete list.", text);
+        // Said before the table…
+        Assert.Contains($"Tasks {note} Time Duration Title Category Template Created by", text);
         Assert.Contains(" Task 5000 ", text);
         Assert.DoesNotContain(" Task 5001 ", text);
-        // The total is still the whole range (= the KPIs).
-        Assert.Contains("Total 1250h 15m 5,001 tasks · 1,250.3 h", text);
+        // …in the header of the day the cap cuts (Dec 24 has tasks 4999–5001)…
+        Assert.Contains("Thursday, December 24, 2026 · 3 tasks · 45m · 2 shown", text);
+        // …and in the total row, which is still the whole range (= the KPIs), with the note again on the same page.
+        using var document = PdfDocument.Open(pdf);
+        var last = document.GetPage(document.NumberOfPages);
+        var lastText = Normalize(ContentOrderTextExtractor.GetText(last));
+        Assert.Contains($"Total 1250h 15m All 5,001 tasks · 1,250.3 h 5,000 shown above {note}", lastText);
+        Assert.Equal(2, Regex.Matches(text, Regex.Escape(note)).Count); // top and bottom only
+
+        // The total duration is on one line.
+        var hours = Assert.Single(last.GetWords(), w => w.Text == "1250h");
+        Assert.Contains(last.GetWords(), w => w.Text == "15m"
+                                             && Math.Abs(w.BoundingBox.Bottom - hours.BoundingBox.Bottom) < 0.5
+                                             && w.BoundingBox.Left > hours.BoundingBox.Right
+                                             && w.BoundingBox.Left - hours.BoundingBox.Right < 5);
     }
 
-    private static string Normalize(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+    [Fact]
+    public void Email_creators_break_after_the_at_sign_instead_of_mid_word()
+    {
+        var org = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var tasks = new[]
+        {
+            // The Organization column makes Created by narrow (~60 pt at 8 pt text).
+            PlannerTask("Shift", "2026-09-28T08:00:00Z", 1, organizationId: org, organizationName: "Acme", createdBy: "maria.jones@tlreview.test"),
+            PlannerTask("Short", "2026-09-28T10:00:00Z", 1, createdBy: "ann@tl.test"),
+            PlannerTask("Long", "2026-09-29T08:00:00Z", 1, createdBy: "averylongfirstname.lastname@example-company.com"),
+            PlannerTask("Named", "2026-09-30T08:00:00Z", 1, createdBy: "Grace Brewster Murray Hopper")
+        };
+
+        var pdf = Render(Build(Request(TaskAnalyticsBreakdown.Daily, 2026, 40, 40, "UTC", "en-US"), tasks), "tasks-emails.pdf");
+
+        using var document = PdfDocument.Open(pdf);
+        var words = document.GetPages().SelectMany(p => p.GetWords()).Select(w => w.Text).ToList();
+        _output.WriteLine(string.Join(" | ", words));
+        // Too wide: split after "@"; fits: one line.
+        Assert.Contains("maria.jones@", words);
+        Assert.Contains("tlreview.test", words);
+        Assert.Contains("ann@tl.test", words);
+        // A part that is still too wide ends with an ellipsis instead of continuing mid-word on another line.
+        Assert.Contains(words, w => w.StartsWith("averylong") && w.EndsWith('…'));
+        Assert.Contains(words, w => w.StartsWith("example") && w.EndsWith('…'));
+        Assert.DoesNotContain(words, w => w.StartsWith("lastname") || w.StartsWith("company"));
+        Assert.Contains("Hopper", words);
+    }
+
+    private static string Normalize(string text) => Regex.Replace(text, @"\s+", " ");
 
     [Fact]
     public void Characters_without_a_glyph_render_blank_instead_of_failing()
