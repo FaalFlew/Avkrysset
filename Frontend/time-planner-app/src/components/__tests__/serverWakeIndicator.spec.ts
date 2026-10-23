@@ -60,4 +60,20 @@ describe("ServerWakeIndicator", () => {
     await renderToString(app, context);
     expect(String((context.teleports as Record<string, string>).body)).toContain("wake-region--raised");
   });
+
+  it("is raised by the toast's measured height (a 3-line toast never overlaps it)", async () => {
+    vi.useFakeTimers();
+    trackMutation();
+    vi.advanceTimersByTime(SLOW_MUTATION_MS);
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const ui = useUIStore();
+    ui.showToast("A long message that wraps over three lines on a phone", "error");
+    ui.setToastHeight(86);
+    const app = createSSRApp(ServerWakeIndicator);
+    app.use(pinia);
+    const context: SSRContext = {};
+    await renderToString(app, context);
+    expect(String((context.teleports as Record<string, string>).body)).toContain("--wake-raise:94px");
+  });
 });

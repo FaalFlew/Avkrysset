@@ -67,7 +67,13 @@ export interface ApiCall {
 interface Answer {
   status: number;
   data?: unknown;
+  /** No HTTP answer at all: a network failure (e.g. a 502 without CORS) or a client timeout. */
+  fail?: "network" | "timeout";
 }
+
+/** A route answer for "no HTTP response" failures. */
+export const NETWORK_FAILURE: Answer = { status: 0, fail: "network" };
+export const TIMEOUT_FAILURE: Answer = { status: 0, fail: "timeout" };
 
 function parseBody(data: unknown): unknown {
   if (typeof data !== "string") return data ?? null;
@@ -155,7 +161,10 @@ export class FakeApi {
           config,
         } as AxiosResponse;
         settle(() => {
-          if (answer.status < 400) resolve(response);
+          if (answer.fail === "network") reject(new AxiosError("Network Error", "ERR_NETWORK", config, {}));
+          else if (answer.fail === "timeout")
+            reject(new AxiosError(`timeout of ${config.timeout}ms exceeded`, "ECONNABORTED", config, {}));
+          else if (answer.status < 400) resolve(response);
           else
             reject(
               new AxiosError(

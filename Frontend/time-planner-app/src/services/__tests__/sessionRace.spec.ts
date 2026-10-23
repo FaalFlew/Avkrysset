@@ -9,11 +9,15 @@ import { createPinia, setActivePinia } from "pinia";
 import {
   CATEGORY,
   FakeApi,
+  NETWORK_FAILURE,
+  TIMEOUT_FAILURE,
   expiredAccessToken,
   flushMicrotasks,
   installBrowserGlobals,
   validAccessToken,
 } from "./fakeApi";
+import { REFRESH_TIMEOUT_MS, REVOKE_RETRY_DELAYS_MS, revokeWithRetry } from "../authService";
+import { NETWORK_ERROR_MESSAGE, SERVER_ERROR_MESSAGE, TIMEOUT_MESSAGE, apiErrorMessage } from "@/lib/apiErrors";
 
 const routerPush = vi.fn();
 vi.mock("@/router", () => ({ default: { push: routerPush } }));
@@ -159,6 +163,88 @@ describe("refresh guard", () => {
     expect(auth.status).toBe("guest");
     await until(() => routerPush.mock.calls.length === 1);
     expect(routerPush).toHaveBeenCalledWith({ path: "/login", query: { sessionExpired: "true" } });
+    // The dropped token is still revoked (best effort).
+    await until(() => api.find("POST", "/auth/logout").length === 1);
+    expect(api.find("POST", "/auth/logout")[0]!.body).toEqual({ refreshToken: "unknown-refresh-token" });
+  });
+
+  it.each([400, 403])("a refresh refused with %i ends the session too", async (status) => {
+    quietConsole();
+    const auth = serverSession({ expired: true });
+    api.routes.push((call) => (call.url === "/auth/refresh" ? { status } : undefined));
+    await apiService.get("/tasks").catch(() => {});
+    expect(auth.status).toBe("guest");
+    await until(() => routerPush.mock.calls.length === 1);
+  });
+});
+
+describe("transient refresh failures keep the session", () => {
+  const cases = [
+    { name: "503", answer: { status: 503 }, message: SERVER_ERROR_MESSAGE },
+    { name: "a network error (502 without CORS)", answer: NETWORK_FAILURE, message: NETWORK_ERROR_MESSAGE },
+    { name: "a timeout", answer: TIMEOUT_FAILURE, message: TIMEOUT_MESSAGE },
+    { name: "429", answer: { status: 429 }, message: null },
+  ];
+
+  it.each(cases)("$name: tokens kept, the request fails with that error, the next request refreshes again", async ({ answer, message }) => {
+    quietConsole();
+    const auth = serverSession({ expired: true });
+    const tokens = { access: auth.accessToken, refresh: auth.refreshToken };
+    let failRefresh = true;
+    api.routes.push((call) => (call.url === "/auth/refresh" && failRefresh ? answer : undefined));
+
+    const [first, second] = await Promise.all([
+      apiService.get("/tasks").catch((e: unknown) => e),
+      apiService.post("/tasks", { title: "x" }).catch((e: unknown) => e),
+    ]);
+    for (const error of [first, second]) {
+      expect(isSessionChangedError(error)).toBe(false);
+      if (message) expect(apiErrorMessage(error, "fallback")).toBe(message);
+    }
+    expect(auth.status).toBe("loggedIn");
+    expect(auth.accessToken).toBe(tokens.access);
+    expect(auth.refreshToken).toBe(tokens.refresh);
+    expect(storage.get("refreshToken")).toBe(tokens.refresh);
+    await flush();
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(api.find("POST", "/auth/logout")).toHaveLength(0);
+
+    // The server is back: the next request refreshes and succeeds.
+    failRefresh = false;
+    expect((await apiService.get("/tasks")).status).toBe(200);
+    expect(auth.refreshToken).not.toBe(tokens.refresh);
+  });
+
+  it("the refresh request has a timeout (a never-answering refresh cannot hang every request)", async () => {
+    const auth = serverSession({ expired: true });
+    await apiService.get("/tasks");
+    expect(api.find("POST", "/auth/refresh")[0]!.config.timeout).toBe(REFRESH_TIMEOUT_MS);
+    expect(auth.status).toBe("loggedIn");
+  });
+});
+
+describe("background revoke retries", () => {
+  const noWait = async () => {};
+
+  it("retries network errors and 5xx, then succeeds", async () => {
+    const answers = [NETWORK_FAILURE, { status: 502 }, { status: 204 }];
+    api.routes.push((call) => (call.url === "/auth/logout" ? answers.shift() : undefined));
+    expect(await revokeWithRetry("rt", [1, 1], noWait)).toBe(true);
+    expect(api.find("POST", "/auth/logout")).toHaveLength(3);
+  });
+
+  it("never retries a 4xx", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    api.routes.push((call) => (call.url === "/auth/logout" ? { status: 429 } : undefined));
+    expect(await revokeWithRetry("rt", [1, 1], noWait)).toBe(false);
+    expect(api.find("POST", "/auth/logout")).toHaveLength(1);
+  });
+
+  it("gives up after the last retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    api.routes.push((call) => (call.url === "/auth/logout" ? { status: 500 } : undefined));
+    expect(await revokeWithRetry("rt", [1, 1], noWait)).toBe(false);
+    expect(api.find("POST", "/auth/logout")).toHaveLength(3);
   });
 });
 
@@ -238,13 +324,18 @@ describe("instant logout", () => {
     expect(revoke.processed).toBe(false); // still waiting: logout did not wait for it
   });
 
-  it("a background logout that fails is ignored (no unhandled rejection, still guest)", async () => {
+  it("a background logout that fails is retried on 5xx, then given up quietly (still guest)", async () => {
+    vi.useFakeTimers();
     const auth = serverSession();
-    api.routes.push((call) => (call.url === "/auth/logout" ? { status: 500 } : undefined));
+    api.routes.push((call) => (call.url === "/auth/logout" ? { status: 503 } : undefined));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await auth.logout();
-    await until(() => warn.mock.calls.length > 0);
     expect(auth.status).toBe("guest");
+
+    await vi.advanceTimersByTimeAsync(REVOKE_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0));
+    await flushMicrotasks();
+    expect(api.find("POST", "/auth/logout")).toHaveLength(1 + REVOKE_RETRY_DELAYS_MS.length);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 
