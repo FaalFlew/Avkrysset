@@ -205,9 +205,10 @@ public sealed class PdfReportSmokeTests
         // Control: left-to-right text is not reversed.
         Assert.Contains(words, w => Logical(w) == "Running");
 
-        // CJK (the font maps 工 to the Kangxi radical too, which NFKC folds back), Korean, emoji, Greek and Cyrillic.
-        Assert.Contains("工作", normalized);
-        Assert.Contains("仕事", normalized);
+        // CJK (extracted as the ideographs themselves, not as the Kangxi radicals that share their glyphs), Korean, emoji,
+        // Greek and Cyrillic.
+        Assert.Contains("工作", visual);
+        Assert.Contains("仕事", visual);
         Assert.Contains("업무", normalized);
         Assert.Contains("🏃", visual);
         Assert.Contains("Ελληνικά", visual);
@@ -296,7 +297,7 @@ public sealed class PdfReportSmokeTests
         Assert.Contains(words, w => Reverse(Logical(w)) == "قراءة");
         Assert.Contains(words, w => Reverse(Logical(w)) == "كتاب");
         Assert.Contains(words, w => Reverse(Logical(w)) == "עבודה");
-        Assert.Contains("工作", visual.Normalize(NormalizationForm.FormKC));
+        Assert.Contains("工作", visual); // not "⼯作" (Kangxi radical U+2F2F)
         Assert.Contains("업무", visual);
         Assert.Contains("🏃", visual);
         Assert.Contains("Total", visual);
