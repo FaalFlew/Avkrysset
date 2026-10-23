@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -179,6 +181,8 @@ public sealed class ApiFixture : IAsyncLifetime
 
                 // Adds the interceptor on top of the app's own UseSqlServer(...) configuration.
                 services.ConfigureDbContext<ApplicationDbContext>(options => options.AddInterceptors(faults, sqlCommands));
+
+                services.AddSingleton<IStartupFilter, TestClientIp.StartupFilter>();
             });
         }
     }
@@ -190,6 +194,41 @@ public sealed class ApiFixture : IAsyncLifetime
 }
 
 public sealed record TestUser(Guid Id, string Email, Guid CategoryId, HttpClient Client);
+
+/// <summary>
+/// TestServer requests have no client IP. A test can pick one with the <see cref="Header"/> request header (test host
+/// only), e.g. to exercise per-IP rate limits without sharing a partition with other tests.
+/// </summary>
+public static class TestClientIp
+{
+    public const string Header = "X-Test-Client-Ip";
+
+    private static int _next;
+
+    /// <summary>A new address from 10.77.0.0/16 for each call.</summary>
+    public static string Unique()
+    {
+        var n = Interlocked.Increment(ref _next);
+        return $"10.77.{(n >> 8) & 0xFF}.{n & 0xFF}";
+    }
+
+    internal sealed class StartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((context, nextMiddleware) =>
+            {
+                if (IPAddress.TryParse(context.Request.Headers[Header].ToString(), out var address))
+                {
+                    context.Connection.RemoteIpAddress = address;
+                }
+
+                return nextMiddleware(context);
+            });
+            next(app);
+        };
+    }
+}
 
 /// <summary>
 /// LocalDB starts its instance on demand, and the first start after boot can be slow or fail
