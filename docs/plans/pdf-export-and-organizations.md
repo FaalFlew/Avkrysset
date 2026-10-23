@@ -2,7 +2,8 @@
 
 Status: **APPROVED 2026-10-10 — all §8 recommendations accepted; Q13 = eligible (revenue < USD 1M); Q14 = 32-bit App Service.**
 - **Phase 1: DONE** (2026-10-10). Backend 319/319 tests; frontend 3857 tests (13 zones), vue-tsc 0, build OK; live integration review passed all 8 checks; its 6 Low findings fixed except admin join-code visibility (Q8), which moves to Phase 3. New migration `20261010151039_AddOrgTimeZoneAndDisplayName` (not yet applied to MAJD or Azure).
-- Phase 2: not started.
+- **Phase 2: DONE** (2026-10-12, PR #14 on `feature/analytics-export`). Backend 460 tests (PDF smoke tests also pass in a 32-bit process); frontend 5,053 tests; live review passed 9/9 (report numbers match the analytics page across DST weeks and ISO W53; audit SHA-256 matches); its High/Medium/Low findings fixed. New migration `AddReportExports`. Publish profile ships win-x86 only (52.6 MB).
+- Phase 3: not started.
 Sources: backend plan + frontend plan (read-only planning agents, 2026-10-05), reconciled by the orchestrator.
 Line references are to the tree as of 2026-10-05.
 

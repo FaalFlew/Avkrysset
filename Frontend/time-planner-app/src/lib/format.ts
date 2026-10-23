@@ -12,6 +12,8 @@ const percentFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 0,
 });
 
+const countFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+
 function finiteOrZero(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
@@ -46,11 +48,17 @@ export function formatPercent(ratio: number): string {
   return percentFormatter.format(value);
 }
 
+/** A whole number with the locale's grouping: 5003 → "5,003" (en), "5 003" (nb), like the KPIs and reports. */
+export function formatCount(count: number): string {
+  return countFormatter.format(finiteOrZero(count));
+}
+
 /**
- * Count with a noun: pluralize(1, "task") → "1 task", pluralize(3, "category", "categories") → "3 categories".
+ * Count with a noun: pluralize(1, "task") → "1 task", pluralize(3, "category", "categories") → "3 categories",
+ * pluralize(5003, "task") → "5,003 tasks" (locale grouping, see {@link formatCount}).
  */
 export function pluralize(count: number, singular: string, plural: string = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
+  return `${formatCount(count)} ${count === 1 ? singular : plural}`;
 }
 
 /**

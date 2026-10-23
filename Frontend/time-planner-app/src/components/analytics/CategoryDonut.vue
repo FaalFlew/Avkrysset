@@ -8,11 +8,13 @@
  *   scopeLabel: string — range label for the caption
  *   loading?: boolean — skeleton body
  *   refetching?: boolean — spinner in the header
+ *   selectedId?: string | null — the task list's category filter (legend item shows it pressed)
+ * Emits: select(id) — a legend item or a segment was clicked (the page filters the task list)
  * Colors follow the category (never its rank); the "n more" segment uses the neutral token.
  */
 import { computed, ref } from "vue";
 import { Doughnut } from "vue-chartjs";
-import type { ChartData, ChartOptions, TooltipItem } from "chart.js";
+import type { ActiveElement, ChartData, ChartEvent, ChartOptions, TooltipItem } from "chart.js";
 import { UiCard, UiSkeleton, UiSpinner } from "@/components/ui";
 import { formatHours, formatPercent, pluralize } from "@/lib/format";
 import type { CategorySlice } from "@/composables/useStats";
@@ -31,9 +33,12 @@ const props = withDefaults(
     scopeLabel: string;
     loading?: boolean;
     refetching?: boolean;
+    selectedId?: string | null;
   }>(),
-  { loading: false, refetching: false }
+  { loading: false, refetching: false, selectedId: null }
 );
+
+const emit = defineEmits<{ select: [id: string] }>();
 
 const MAX_SEGMENTS = 6;
 const LEGEND_PREVIEW = 6;
@@ -42,6 +47,8 @@ const theme = useChartTheme();
 const showAll = ref(false);
 
 interface Segment {
+  /** Category id; null for the "n more" segment. */
+  id: string | null;
   name: string;
   hours: number;
   share: number;
@@ -52,6 +59,7 @@ const segments = computed<Segment[]>(() => {
   const list = props.categories.filter((c) => c.hours > 0);
   const neutral = theme.value.neutral;
   const toSegment = (c: CategorySlice): Segment => ({
+    id: c.id,
     name: c.name,
     hours: c.hours,
     share: c.share,
@@ -64,6 +72,7 @@ const segments = computed<Segment[]>(() => {
   return [
     ...head,
     {
+      id: null,
       name: `${tail.length} more`,
       hours,
       share: props.totalHours > 0 ? hours / props.totalHours : 0,
@@ -112,6 +121,16 @@ const chartOptions = computed<ChartOptions<"doughnut">>(() => {
     cutout: "68%",
     layout: { padding: 4 },
     animation: { duration: t.animationMs, easing: "easeOutCubic" },
+    // A category's segment filters the task list (the legend buttons do the same for keyboards).
+    onClick: (_event: ChartEvent, elements: ActiveElement[]) => {
+      const id = list[elements[0]?.index ?? -1]?.id;
+      if (id) emit("select", id);
+    },
+    onHover: (event: ChartEvent, elements: ActiveElement[]) => {
+      const canvas = (event.native?.target ?? null) as HTMLCanvasElement | null;
+      const id = list[elements[0]?.index ?? -1]?.id;
+      if (canvas?.style) canvas.style.cursor = id ? "pointer" : "default";
+    },
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -173,15 +192,24 @@ const tableColumns = [
 
       <div class="legend">
         <ol class="legend__list" role="list" aria-label="Categories by time">
-          <li v-for="c in legend" :key="c.id" class="legend__item">
-            <span
-              class="legend__dot"
-              :style="{ backgroundColor: c.color || 'var(--chart-neutral)' }"
-              aria-hidden="true"
-            ></span>
-            <span class="legend__name" :title="c.name">{{ c.name }}</span>
-            <span class="legend__hours">{{ formatHours(c.hours) }}</span>
-            <span class="legend__share">{{ formatPercent(c.share) }}</span>
+          <li v-for="c in legend" :key="c.id">
+            <button
+              type="button"
+              class="legend__item"
+              :class="{ 'is-selected': selectedId === c.id }"
+              :aria-pressed="selectedId === c.id"
+              :aria-label="`${c.name}, ${formatHours(c.hours)}, ${formatPercent(c.share)}. Show its tasks`"
+              @click="emit('select', c.id)"
+            >
+              <span
+                class="legend__dot"
+                :style="{ backgroundColor: c.color || 'var(--chart-neutral)' }"
+                aria-hidden="true"
+              ></span>
+              <span class="legend__name" :title="c.name">{{ c.name }}</span>
+              <span class="legend__hours">{{ formatHours(c.hours) }}</span>
+              <span class="legend__share">{{ formatPercent(c.share) }}</span>
+            </button>
           </li>
         </ol>
         <button
@@ -296,9 +324,34 @@ const tableColumns = [
   grid-template-columns: auto minmax(0, 1fr) auto 3.5em;
   align-items: center;
   gap: var(--space-2);
+  width: calc(100% + 2 * var(--space-1-5));
   min-height: 28px;
+  margin: 0 calc(-1 * var(--space-1-5));
+  padding: 0 var(--space-1-5);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
   font-size: var(--fs-13);
   line-height: var(--lh-13);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.legend__item:hover {
+  background-color: var(--bg-subtle);
+}
+.legend__item.is-selected {
+  background-color: var(--accent-subtle);
+}
+.legend__item.is-selected .legend__name {
+  font-weight: var(--fw-medium);
+}
+
+@media (pointer: coarse) {
+  .legend__item {
+    min-height: 40px;
+  }
 }
 
 .legend__dot {
@@ -339,5 +392,18 @@ const tableColumns = [
 }
 .legend__toggle:hover {
   background-color: var(--accent-subtle);
+}
+
+/* Paper: the full category list is in the expanded data table below. */
+@media print {
+  .legend__toggle {
+    display: none;
+  }
+  .legend__item.is-selected {
+    background: none;
+  }
+  .donut-layout {
+    break-inside: avoid;
+  }
 }
 </style>

@@ -137,59 +137,63 @@
   --shadow-lg: 0 16px 40px -8px rgb(16 16 20 / 0.18), 0 4px 10px -4px rgb(16 16 20 / 0.08);
 }
 
-[data-theme="dark"] {
-  color-scheme: dark;
-  --bg-app: #141416;
-  --bg-sidebar: #101012;
-  --bg-surface: #18181B;
-  --bg-raised: #1E1E22;
-  --bg-subtle: #232328;
-  --bg-muted: #2A2A30;
-  --bg-inset: #161618;
-  --bg-input: #121214;
-  --bg-inverse: #EDEDEF;
-  --bg-scrim: rgb(0 0 0 / 0.6);
-  --border-subtle: #232328;
-  --border-default: #2E2E35;
-  --border-strong: #3F3F48;
-  --border-input: #6A6A74;        /* 3.31 on #18181B, 3.50 on --bg-input */
-  --border-input-hover: #85858F;
-  --text-primary: #EDEDEF;    /* 15.15 on #18181B */
-  --text-secondary: #A1A1AA;  /* 6.91 on #18181B, 5.57 on --bg-muted */
-  --text-tertiary: #909099;   /* 5.60 on #18181B, 4.51 on --bg-muted */
-  --text-disabled: #5A5A63;
-  --text-inverse: #18181B;
-  --text-inverse-secondary: #52525B;
-  --text-on-accent: #FFFFFF;
-  --accent: #5560DB;          /* white 5.14 */
-  --accent-hover: #5D68E2;    /* white 4.62 */
-  --accent-active: #4A54C8;   /* white 6.19 */
-  --accent-text: #9BA4FF;     /* 7.72 on #18181B, 6.59 on subtle */
-  --accent-subtle: #22243D;
-  --accent-subtle-hover: #2A2D4A;
-  --accent-border: #3D4380;
-  --focus-ring: #8D97FA;      /* 6.70 on #18181B */
-  --focus-ring-soft: rgb(141 151 250 / 0.28);
-  --success-solid: #3DBE7E; --success-text: #4CC38A; --success-subtle: #12291E;
-  --warning-solid: #F0B44C; --warning-text: #F0B44C; --warning-subtle: #2C2112;
-  --danger: #D93036; --danger-hover: #C42A30;
-  --danger-text: #FF7A7F;     /* 7.04 on #18181B */
-  --danger-subtle: #2F1517; --danger-border: #5C2326;
-  --grid-bg: #141416;
-  --grid-line: #232328;
-  --grid-line-half: #1B1B1F;
-  --grid-weekend: #121214;
-  --grid-today: rgb(141 151 250 / 0.045);
-  --grid-hover: rgb(141 151 250 / 0.08);
-  --now: #FF5A60;
-  --now-pill-bg: #FF5A60; --now-pill-text: #18181B;
-  --block-tint: 22%; --block-tint-hover: 30%;
-  --chart-text: #A1A1AA; --chart-text-muted: #909099; --chart-grid: #26262C; --chart-axis: #3F3F48;
-  --chart-bar: #7C86F0; --chart-bar-hover: #9BA4FF; --chart-neutral: #5A5A63; --chart-slice-gap: #18181B;
-  --toast-bg: #EDEDEF; --toast-text: #18181B; --toast-text-secondary: #52525B;
-  --toast-success: #18794E; --toast-danger: #C42A30; --toast-info: #434DC0; --toast-action: #434DC0;
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.04);
-  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(255 255 255 / 0.05);
+/* Dark tokens never apply on paper: printing always uses the light tokens above (the print
+   path in usePrintMode also switches <html data-theme> so charts redraw in light colors). */
+@media not print {
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg-app: #141416;
+    --bg-sidebar: #101012;
+    --bg-surface: #18181B;
+    --bg-raised: #1E1E22;
+    --bg-subtle: #232328;
+    --bg-muted: #2A2A30;
+    --bg-inset: #161618;
+    --bg-input: #121214;
+    --bg-inverse: #EDEDEF;
+    --bg-scrim: rgb(0 0 0 / 0.6);
+    --border-subtle: #232328;
+    --border-default: #2E2E35;
+    --border-strong: #3F3F48;
+    --border-input: #6A6A74;        /* 3.31 on #18181B, 3.50 on --bg-input */
+    --border-input-hover: #85858F;
+    --text-primary: #EDEDEF;    /* 15.15 on #18181B */
+    --text-secondary: #A1A1AA;  /* 6.91 on #18181B, 5.57 on --bg-muted */
+    --text-tertiary: #909099;   /* 5.60 on #18181B, 4.51 on --bg-muted */
+    --text-disabled: #5A5A63;
+    --text-inverse: #18181B;
+    --text-inverse-secondary: #52525B;
+    --text-on-accent: #FFFFFF;
+    --accent: #5560DB;          /* white 5.14 */
+    --accent-hover: #5D68E2;    /* white 4.62 */
+    --accent-active: #4A54C8;   /* white 6.19 */
+    --accent-text: #9BA4FF;     /* 7.72 on #18181B, 6.59 on subtle */
+    --accent-subtle: #22243D;
+    --accent-subtle-hover: #2A2D4A;
+    --accent-border: #3D4380;
+    --focus-ring: #8D97FA;      /* 6.70 on #18181B */
+    --focus-ring-soft: rgb(141 151 250 / 0.28);
+    --success-solid: #3DBE7E; --success-text: #4CC38A; --success-subtle: #12291E;
+    --warning-solid: #F0B44C; --warning-text: #F0B44C; --warning-subtle: #2C2112;
+    --danger: #D93036; --danger-hover: #C42A30;
+    --danger-text: #FF7A7F;     /* 7.04 on #18181B */
+    --danger-subtle: #2F1517; --danger-border: #5C2326;
+    --grid-bg: #141416;
+    --grid-line: #232328;
+    --grid-line-half: #1B1B1F;
+    --grid-weekend: #121214;
+    --grid-today: rgb(141 151 250 / 0.045);
+    --grid-hover: rgb(141 151 250 / 0.08);
+    --now: #FF5A60;
+    --now-pill-bg: #FF5A60; --now-pill-text: #18181B;
+    --block-tint: 22%; --block-tint-hover: 30%;
+    --chart-text: #A1A1AA; --chart-text-muted: #909099; --chart-grid: #26262C; --chart-axis: #3F3F48;
+    --chart-bar: #7C86F0; --chart-bar-hover: #9BA4FF; --chart-neutral: #5A5A63; --chart-slice-gap: #18181B;
+    --toast-bg: #EDEDEF; --toast-text: #18181B; --toast-text-secondary: #52525B;
+    --toast-success: #18794E; --toast-danger: #C42A30; --toast-info: #434DC0; --toast-action: #434DC0;
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5);
+    --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.04);
+    --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(255 255 255 / 0.05);
+  }
 }

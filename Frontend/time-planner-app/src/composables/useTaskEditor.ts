@@ -21,11 +21,23 @@ export interface EditorDraft {
   categoryId: string;
 }
 
+/** How the editor names a task's category when it differs from the task's own fields. */
+export interface EditorCategoryHint {
+  name: string;
+  /** Hex color; null when unknown. */
+  color: string | null;
+}
+
 interface EditorState {
   open: boolean;
   mode: EditorMode;
   /** The task being edited (edit mode). */
   task: Task | null;
+  /**
+   * The category grouping the opener shows for this task (analytics: an assigned org task counts
+   * under its organization); the read-only view uses it instead of the creator's own category.
+   */
+  categoryHint: EditorCategoryHint | null;
   /** Rect of the block/draft the editor is anchored to (≥ 1024px). */
   anchorRect: AnchorRect | null;
   /** Increments on every open, so the editor re-initializes its fields. */
@@ -36,6 +48,7 @@ const state = reactive<EditorState>({
   open: false,
   mode: "create",
   task: null,
+  categoryHint: null,
   anchorRect: null,
   session: 0,
 });
@@ -80,18 +93,25 @@ function openCreate(options: OpenCreateOptions = {}): void {
   draft.categoryId = "";
   state.mode = "create";
   state.task = null;
+  state.categoryHint = null;
   state.anchorRect = toRect(options.anchorRect);
   state.session += 1;
   state.open = true;
 }
 
-function openEdit(task: Task, anchorRect?: AnchorRect | DOMRect | null): void {
+export interface OpenEditOptions {
+  /** See EditorState.categoryHint. */
+  category?: EditorCategoryHint | null;
+}
+
+function openEdit(task: Task, anchorRect?: AnchorRect | DOMRect | null, options: OpenEditOptions = {}): void {
   draft.start = task.start;
   draft.durationH = task.duration;
   draft.title = task.title;
   draft.categoryId = task.categoryId;
   state.mode = "edit";
   state.task = { ...task };
+  state.categoryHint = options.category ? { ...options.category } : null;
   state.anchorRect = toRect(anchorRect);
   state.session += 1;
   state.open = true;
@@ -120,7 +140,7 @@ function setVisibleDaysProvider(provider: (() => readonly DateKey[]) | null): vo
 
 export function useTaskEditor() {
   return {
-    /** Read-only editor state: open, mode, task, anchorRect, session. */
+    /** Read-only editor state: open, mode, task, categoryHint, anchorRect, session. */
     state: readonly(state),
     /** Live field values (written by the editor, read by the planner's draft block). */
     draft,

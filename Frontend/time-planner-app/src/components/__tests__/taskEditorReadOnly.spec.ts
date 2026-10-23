@@ -75,12 +75,16 @@ function orgTask(capabilities: TaskCapabilities): Task {
 const tokenFor = (userId: string) =>
   ["header", Buffer.from(JSON.stringify({ sub: userId })).toString("base64url"), "sig"].join(".");
 
-async function renderEditor(task: Task, signedInAs: string | null = null): Promise<string> {
+async function renderEditor(
+  task: Task,
+  signedInAs: string | null = null,
+  category: { name: string; color: string | null } | null = null
+): Promise<string> {
   const pinia = createPinia();
   setActivePinia(pinia);
   useAuthStore().accessToken = signedInAs ? tokenFor(signedInAs) : null;
   useTaskStore().categories = [CATEGORY];
-  useTaskEditor().openEdit(task);
+  useTaskEditor().openEdit(task, null, { category });
   const app = createSSRApp({ render: () => h(TaskEditor) });
   app.use(pinia);
   return renderToString(app);
@@ -104,12 +108,26 @@ describe("read-only org task (assigned by an admin)", () => {
     expect(visible).toContain("Assigned by Ada Admin · Acme");
     expect(visible).toContain("Me Myself");
     expect(visible).toContain("Kari Nordmann");
-    expect(visible).toContain("Sales"); // the org's category name, read from the task
+    // Grouped under the organization (as in analytics), never the creator's own category name.
+    expect(visible).toContain("Category Acme");
+    expect(visible).not.toContain("Sales");
     expect(visible).toContain("Close");
     expect(visible).not.toMatch(/\bSave\b/);
     expect(visible).not.toMatch(/\bDelete\b/);
     expect(html).toContain("editor--readonly");
     expect(html).not.toMatch(/<input/); // no editable fields
+  });
+});
+
+describe("read-only org task opened from the analytics task list", () => {
+  it("shows the list's grouping (organization name and color), not the creator's category", async () => {
+    const html = await renderEditor(orgTask({ canEdit: false, canDelete: false, canReassign: false }), null, {
+      name: "Acme Ops",
+      color: "#0E9C8C",
+    });
+    expect(text(html)).toContain("Category Acme Ops");
+    expect(text(html)).not.toContain("Sales");
+    expect(html).toMatch(/background-color:\s*#0E9C8C/i);
   });
 });
 

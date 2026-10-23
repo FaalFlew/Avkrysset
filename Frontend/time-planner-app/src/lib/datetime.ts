@@ -430,6 +430,36 @@ export function formatTimeZoneLabel(at: InstantInput = now()): string {
   return `${formatUtcOffset(at)} · ${zone}`;
 }
 
+/** `"+02:00"`, `"-03:30"`, `"+05:45"` for an offset in minutes. */
+function offsetText(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  return `${sign}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`;
+}
+
+/**
+ * Distinct UTC offsets (minutes, ascending) of the active zone in force during the half-open
+ * `range`: sampled every 12 hours plus the last instant, like the server's report label.
+ */
+export function utcOffsetsWithin(range: InstantRange): number[] {
+  const start = toEpochMs(range.start);
+  const end = toEpochMs(range.end);
+  const offsets = new Set<number>();
+  for (let t = start; t < end; t += 12 * HOUR_MS) offsets.add(getUtcOffsetMinutes(t));
+  offsets.add(getUtcOffsetMinutes(end > start ? end - 1 : start));
+  return [...offsets].sort((a, b) => a - b);
+}
+
+/**
+ * The active zone for a report range, in the server's format: `"Europe/Oslo (UTC+02:00)"`;
+ * `"Europe/Oslo (UTC+01:00/+02:00)"` when the offset changes within the range (DST); `"UTC"`.
+ */
+export function formatZoneLabelForRange(range: InstantRange): string {
+  const zone = getActiveTimeZone();
+  const offsets = utcOffsetsWithin(range);
+  if (offsets.length === 1 && offsets[0] === 0 && (zone === "UTC" || zone === "Etc/UTC")) return "UTC";
+  return `${zone} (UTC${offsets.map(offsetText).join("/")})`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Parsing and serialization
 // ---------------------------------------------------------------------------------------------
@@ -941,11 +971,26 @@ export function gridBox(
 /** Locale for all display formatting: `undefined` = the browser's locale (24h/12h follows it). */
 export const DISPLAY_LOCALE: string | undefined = undefined;
 
-function formatter(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const cacheKey = JSON.stringify(options);
+/**
+ * A supported BCP-47 locale for formatting, or `undefined` (the display locale) when `locale` is
+ * missing or not a valid tag. Lets exports format in the locale they were asked for (e.g. the
+ * guest CSV uses the locale its delimiter comes from).
+ */
+function formattingLocale(locale: string | undefined): string | undefined {
+  if (!locale) return DISPLAY_LOCALE;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(locale).length > 0 ? locale : DISPLAY_LOCALE;
+  } catch {
+    return DISPLAY_LOCALE;
+  }
+}
+
+function formatter(options: Intl.DateTimeFormatOptions, locale?: string): Intl.DateTimeFormat {
+  const resolved = formattingLocale(locale);
+  const cacheKey = `${resolved ?? ""}|${JSON.stringify(options)}`;
   let f = formatterCache.get(cacheKey);
   if (!f) {
-    f = new Intl.DateTimeFormat(DISPLAY_LOCALE, options);
+    f = new Intl.DateTimeFormat(resolved, options);
     formatterCache.set(cacheKey, f);
   }
   return f;
@@ -957,8 +1002,8 @@ function instantFormatter(options: Intl.DateTimeFormatOptions): Intl.DateTimeFor
 }
 
 /** Formatter for calendar labels: applied at UTC noon with `timeZone: 'UTC'` (DST-proof). */
-function calendarFormatter(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  return formatter({ ...options, timeZone: "UTC" });
+function calendarFormatter(options: Intl.DateTimeFormatOptions, locale?: string): Intl.DateTimeFormat {
+  return formatter({ ...options, timeZone: "UTC" }, locale);
 }
 
 function timeOptions(): Intl.DateTimeFormatOptions {
@@ -981,6 +1026,16 @@ export function uses12HourClock(): boolean {
 /** Local time of an instant: `"09:30"` or `"9:30 AM"` depending on the locale. */
 export function formatTime(value: InstantInput): string {
   return instantFormatter(timeOptions()).format(toEpochMs(value));
+}
+
+/**
+ * Local date and time of an instant (medium date + the locale's clock):
+ * `"Oct 11, 2026, 14:05"` / `"Oct 11, 2026, 2:05 PM"` / `"11. okt. 2026, 14:05"`.
+ */
+export function formatDateTime(value: InstantInput): string {
+  return instantFormatter({ year: "numeric", month: "short", day: "numeric", ...timeOptions() }).format(
+    toEpochMs(value)
+  );
 }
 
 /** `"09:00 – 10:30"`: start and `start + hours`, both in local time. */
@@ -1014,9 +1069,9 @@ export function formatWeekdayShort(key: DateKey): string {
   return calendarFormatter({ weekday: "short" }).format(keyToUtcNoon(key));
 }
 
-/** `"Monday"` */
-export function formatWeekdayLong(key: DateKey): string {
-  return calendarFormatter({ weekday: "long" }).format(keyToUtcNoon(key));
+/** `"Monday"` (`"mandag"` with `locale` "nb-NO"; default: the display locale). */
+export function formatWeekdayLong(key: DateKey, locale?: string): string {
+  return calendarFormatter({ weekday: "long" }, locale).format(keyToUtcNoon(key));
 }
 
 /** `"5"` */
@@ -1041,15 +1096,15 @@ const DATE_STYLE_OPTIONS: Record<DateStyle, Intl.DateTimeFormatOptions> = {
 
 /**
  * Format a calendar date (or the local date of an instant). See {@link DateStyle}.
- * `formatDate(todayKey(), "weekday")` -> `"Saturday, October 3"`.
+ * `formatDate(todayKey(), "weekday")` -> `"Saturday, October 3"`. `locale` defaults to the display locale.
  */
-export function formatDate(value: DateKey | InstantInput, style: DateStyle = "medium"): string {
-  return calendarFormatter(DATE_STYLE_OPTIONS[style]).format(keyToUtcNoon(toDateKey(value)));
+export function formatDate(value: DateKey | InstantInput, style: DateStyle = "medium", locale?: string): string {
+  return calendarFormatter(DATE_STYLE_OPTIONS[style], locale).format(keyToUtcNoon(toDateKey(value)));
 }
 
 /** `"March 2026"` (`monthIndex` 0-based). */
-export function formatMonthYear(year: number, monthIndex: number): string {
-  return formatDate(dateKeyFromParts(year, monthIndex, 1), "monthYear");
+export function formatMonthYear(year: number, monthIndex: number, locale?: string): string {
+  return formatDate(dateKeyFromParts(year, monthIndex, 1), "monthYear", locale);
 }
 
 type RangeFormatter = Intl.DateTimeFormat & {
@@ -1060,9 +1115,10 @@ function formatCalendarRange(
   options: Intl.DateTimeFormatOptions,
   startKey: DateKey,
   endKey: DateKey,
-  fallback: () => string
+  fallback: () => string,
+  locale?: string
 ): string {
-  const f = calendarFormatter(options) as RangeFormatter;
+  const f = calendarFormatter(options, locale) as RangeFormatter;
   if (typeof f.formatRange === "function") {
     return f.formatRange(keyToUtcNoon(startKey), keyToUtcNoon(endKey));
   }
@@ -1070,13 +1126,14 @@ function formatCalendarRange(
 }
 
 /** Inclusive date range, locale-aware: `"Sep 28 – Oct 4, 2026"`. */
-export function formatDateRange(startKey: DateKey, endKey: DateKey): string {
-  if (startKey === endKey) return formatDate(startKey, "medium");
+export function formatDateRange(startKey: DateKey, endKey: DateKey, locale?: string): string {
+  if (startKey === endKey) return formatDate(startKey, "medium", locale);
   return formatCalendarRange(
     { year: "numeric", month: "short", day: "numeric" },
     startKey,
     endKey,
-    () => `${formatDate(startKey, "monthDay")} – ${formatDate(endKey, "medium")}`
+    () => `${formatDate(startKey, "monthDay", locale)} – ${formatDate(endKey, "medium", locale)}`,
+    locale
   );
 }
 
@@ -1097,9 +1154,9 @@ export function formatMonthSpan(startKey: DateKey, endKey: DateKey): string {
   );
 }
 
-/** The 12 month names in the display locale, January first. */
-export function monthNames(style: "long" | "short" = "long"): string[] {
-  const f = calendarFormatter({ month: style });
+/** The 12 month names in the display locale (or `locale`), January first. */
+export function monthNames(style: "long" | "short" = "long", locale?: string): string[] {
+  const f = calendarFormatter({ month: style }, locale);
   return Array.from({ length: 12 }, (_, m) => f.format(utcMs(2000, m, 15, 12)));
 }
 
