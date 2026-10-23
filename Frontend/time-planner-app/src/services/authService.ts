@@ -1,6 +1,8 @@
-// NEW FILE: src/services/authService.ts
+// src/services/authService.ts — the /auth endpoints.
 
+import { isCancel } from "axios";
 import apiService from "./apiService";
+import { httpStatus } from "@/lib/apiErrors";
 import type { AuthResponse } from "@/types";
 import type {
   RegisterRequest,
@@ -26,14 +28,27 @@ async function register(userData: RegisterRequest): Promise<void> {
 }
 
 /**
+ * How long a token refresh may take. Without a limit, a refresh the server never answers would
+ * hang every request waiting for it. Longer than a cold start (~20–40 s): a refresh the server
+ * is still going to process should not be abandoned (its rotated token would be lost). A timeout
+ * is transient: the session is kept and the next request tries again.
+ */
+export const REFRESH_TIMEOUT_MS = 45_000;
+/** Per attempt of the background logout (the server may be cold). */
+export const REVOKE_TIMEOUT_MS = 60_000;
+/** Waits before retrying a background logout that failed with a network error or 5xx. */
+export const REVOKE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000];
+
+/**
  * Exchange a refresh token for new tokens. Session-independent: it is never aborted when the user
  * logs out meanwhile, so the auth store learns the rotated refresh token and can revoke it.
+ * Rejects with the original axios error (its status tells a refused token from a cold server).
  */
 async function refresh(refreshToken: string): Promise<AuthResponse> {
   const response = await apiService.post<AuthResponse>(
     "/auth/refresh",
     { refreshToken },
-    { sessionIndependent: true }
+    { sessionIndependent: true, timeout: REFRESH_TIMEOUT_MS }
   );
   return response.data;
 }
@@ -44,17 +59,47 @@ async function refresh(refreshToken: string): Promise<AuthResponse> {
  * server revoke the CURRENT session of that user, which may be a newer one.
  */
 async function logout(refreshToken: string): Promise<void> {
-  await apiService.post("/auth/logout", { refreshToken }, { sessionIndependent: true });
+  await apiService.post("/auth/logout", { refreshToken }, { sessionIndependent: true, timeout: REVOKE_TIMEOUT_MS });
+}
+
+/** Worth retrying: no answer (network, timeout) or a server error. Never a 4xx. */
+function isRetriableRevokeError(error: unknown): boolean {
+  if (isCancel(error)) return false;
+  const status = httpStatus(error);
+  return status === null || status >= 500;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Revoke `refreshToken`, retrying network errors and 5xx after each of `delays` (never a 4xx).
+ * Resolves true when the server answered 2xx; never rejects.
+ */
+export async function revokeWithRetry(
+  refreshToken: string,
+  delays: readonly number[] = REVOKE_RETRY_DELAYS_MS,
+  wait: (ms: number) => Promise<void> = sleep
+): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await logout(refreshToken);
+      return true;
+    } catch (error) {
+      if (!isRetriableRevokeError(error) || attempt >= delays.length) {
+        console.warn("Could not revoke the refresh token on the server (it expires on its own):", error);
+        return false;
+      }
+      await wait(delays[attempt]!);
+    }
+  }
 }
 
 /**
- * Background logout: revoke `refreshToken` without waiting (a cold server may take a while).
- * Never throws; if it fails, the token simply expires on its own.
+ * Background logout: revoke `refreshToken` without waiting (a cold server may take a while),
+ * retried a couple of times on network errors / 5xx. Never throws.
  */
 function revokeRefreshToken(refreshToken: string): void {
-  logout(refreshToken).catch((error: unknown) => {
-    console.warn("Could not revoke the refresh token on the server:", error);
-  });
+  void revokeWithRetry(refreshToken);
 }
 
 // ADDED: Function to confirm a user's email

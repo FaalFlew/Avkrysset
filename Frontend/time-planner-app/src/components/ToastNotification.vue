@@ -147,6 +147,28 @@ watch(
 
 onBeforeUnmount(clearTimers);
 
+// Report the toast's rendered height (1–3 lines) so what stacks above it — the "Waking up the
+// server…" pill — clears it exactly (uiStore.toastHeight; 0 while hidden).
+const toastEl = ref<HTMLElement | null>(null);
+let heightObserver: ResizeObserver | null = null;
+watch(toastEl, (el) => {
+  heightObserver?.disconnect();
+  heightObserver = null;
+  if (!el) {
+    uiStore.setToastHeight(0);
+    return;
+  }
+  uiStore.setToastHeight(el.offsetHeight);
+  if (typeof ResizeObserver !== "undefined") {
+    heightObserver = new ResizeObserver(() => uiStore.setToastHeight(el.offsetHeight));
+    heightObserver.observe(el);
+  }
+});
+onBeforeUnmount(() => {
+  heightObserver?.disconnect();
+  uiStore.setToastHeight(0);
+});
+
 const icon = computed(() => {
   switch (shown.value.type) {
     case "success":
@@ -178,6 +200,7 @@ function dismiss(): void {
       <Transition name="toast">
         <div
           v-if="toast.isVisible"
+          ref="toastEl"
           class="toast"
           :class="`toast--${shown.type}`"
           @pointerenter="onPointerEnter"

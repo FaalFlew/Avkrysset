@@ -26,6 +26,7 @@ import { useTaskEditor } from "./composables/useTaskEditor";
 import { installHotkeys, type HotkeyMap } from "./composables/useHotkeys";
 import { useTimeZone } from "./composables/useClock";
 import { installSessionWarmup } from "./composables/useSessionWarmup";
+import { closeSessionBoundUi, onSessionChange } from "./composables/useSessionBound";
 import { weekDaysOf, weekRange } from "@/lib/datetime";
 
 const uiStore = useUIStore();
@@ -83,6 +84,9 @@ onMounted(() => {
 });
 onBeforeUnmount(() => uninstallWarmup?.());
 
+// A session that ends (or starts) closes the editor, confirm dialogs and Undo toasts of the old one.
+onSessionChange(closeSessionBoundUi);
+
 // ---------------------------------------------------------------- hotkeys
 function guard(fn: () => unknown): () => boolean | void {
   return () => {
@@ -135,8 +139,10 @@ function skipToContent(): void {
 
       <main id="main" class="app-shell__main" :class="{ 'is-planner': isPlanner }" tabindex="-1">
         <!-- Keyed on the time zone: if the device zone changes (travel), the page remounts so every
-             position/label is recomputed and Today/Analytics refetch on mount. -->
-        <RouterView :key="timeZone" />
+             position/label is recomputed and Today/Analytics refetch on mount. Keyed on the auth
+             state too: pages pick guest or account data at setup, so a session that ends or starts
+             underneath them (e.g. a logout in another tab) remounts them in the right mode. -->
+        <RouterView :key="`${timeZone}|${isAuthenticated}`" />
       </main>
 
       <AppTabBar v-if="isMobile" />

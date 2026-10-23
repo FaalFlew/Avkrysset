@@ -12,7 +12,12 @@
 import axios, { CanceledError, isCancel, type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import type * as AuthStoreModule from "@/stores/authStore";
 import { getActiveTimeZone } from "@/lib/datetime";
-import { isSessionChangedError, organizationIdFromUrl, SessionChangedError } from "@/lib/apiErrors";
+import {
+  isRefreshRefused,
+  isSessionChangedError,
+  organizationIdFromUrl,
+  SessionChangedError,
+} from "@/lib/apiErrors";
 import { trackMutation } from "./slowRequests";
 
 declare module "axios" {
@@ -336,12 +341,18 @@ apiService.interceptors.response.use(
           }
           if (isCancel(refreshError)) return Promise.reject(refreshError);
 
-          // The refresh failed (e.g. refresh token expired on server): log out locally (no API
-          // call: the session is dead) and ask the user to sign in again. Other requests waiting
-          // for this refresh are aborted by the session change.
-          authStore._clearTokens();
+          // A cold or unreachable server (no answer, timeout, 408, 429, 5xx) says nothing about
+          // the session: keep the tokens and fail this request with that error (network / server
+          // copy). The next request tries the refresh again.
+          if (!isRefreshRefused(refreshError)) return Promise.reject(refreshError);
+
+          // The server refused the refresh token (expired / revoked): the session is over. Log
+          // out locally (the dropped token is still revoked in the background, best effort) and
+          // ask the user to sign in again. Requests waiting for this refresh are aborted by the
+          // session change.
+          await authStore.logout();
           redirectToLogin({ sessionExpired: "true" });
-          return Promise.reject(refreshError);
+          return Promise.reject(new Error("Session expired. Please log in again."));
         }
       }
 

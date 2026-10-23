@@ -63,6 +63,16 @@ export function isSessionChangedError(error: unknown): error is SessionChangedEr
   );
 }
 
+/**
+ * The server refused a token refresh (400/401/403): the refresh token is invalid, expired or
+ * revoked, so the session is over. Anything else — no response, timeout, 408, 429, 5xx — is
+ * transient: keep the session and try the refresh again on the next request.
+ */
+export function isRefreshRefused(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status === 400 || status === 401 || status === 403;
+}
+
 export const isForbidden = (error: unknown) => httpStatus(error) === 403;
 export const isNotFound = (error: unknown) => httpStatus(error) === 404;
 export const isConflict = (error: unknown) => httpStatus(error) === 409;

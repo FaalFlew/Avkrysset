@@ -6,28 +6,43 @@
  * (services/slowRequests.ts). Mount once (App.vue, app shell only: the sign-in pages have their
  * own hint). Nothing to click; the change completes (or fails with a toast) on its own.
  *
- * Position: bottom center like the toast (above the phone tab bar, centered over the main column
- * next to the sidebar/rail); it moves up while a toast is visible so the two never overlap.
- * Teleported to <body> so it also shows above the task editor dialog that is saving.
- * Accessibility: a persistent polite live region announces it once when it appears.
+ * Position (lib/wakeIndicator.ts): bottom center like the toast (above the phone tab bar,
+ * centered over the main column next to the sidebar/rail), raised above a visible toast by its
+ * measured height. Hidden while a modal dialog / bottom sheet is open: there the dialog's Save
+ * button says "Waking up server…" instead.
+ * Accessibility: a persistent polite live region (outside the inert app) announces it once.
  */
 import { computed } from "vue";
 import UiSpinner from "@/components/ui/UiSpinner.vue";
+import { hasOpenModal } from "@/components/ui/dialogStack";
 import { isMutationSlow } from "@/services/slowRequests";
 import { useUIStore } from "@/stores/uiStore";
+import { wakeIndicatorLayout } from "@/lib/wakeIndicator";
 
 const uiStore = useUIStore();
-const raised = computed(() => uiStore.toast.isVisible);
+const layout = computed(() =>
+  wakeIndicatorLayout({
+    slow: isMutationSlow.value,
+    modalOpen: hasOpenModal.value,
+    toastVisible: uiStore.toast.isVisible,
+    toastHeight: uiStore.toastHeight,
+  })
+);
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="wake-region" :class="{ 'wake-region--raised': raised }" data-overlay-ignore>
+    <div
+      class="wake-region"
+      :class="{ 'wake-region--raised': layout.raiseBy > 0 }"
+      :style="{ '--wake-raise': `${layout.raiseBy}px` }"
+      data-overlay-ignore
+    >
       <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {{ isMutationSlow ? "Saving is taking longer than usual: waking up the server." : "" }}
       </div>
       <Transition name="wake">
-        <p v-if="isMutationSlow" class="wake-pill" aria-hidden="true">
+        <p v-if="layout.visible" class="wake-pill" aria-hidden="true">
           <UiSpinner :size="14" />
           <span>Waking up the server…</span>
           <span class="wake-pill__more">this can take a few seconds.</span>
@@ -41,7 +56,8 @@ const raised = computed(() => uiStore.toast.isVisible);
 .wake-region {
   position: fixed;
   left: 50%;
-  bottom: var(--toast-offset);
+  /* --wake-raise: the visible toast's measured height + a gap (0 without a toast). */
+  bottom: calc(var(--toast-offset) + var(--wake-raise, 0px));
   z-index: var(--z-toast);
   display: flex;
   justify-content: center;
@@ -49,10 +65,6 @@ const raised = computed(() => uiStore.toast.isVisible);
   transform: translateX(-50%);
   pointer-events: none;
   transition: bottom var(--dur-base) var(--ease-standard);
-}
-/* Above a visible toast (one line of toast ≈ 44px, plus a gap). */
-.wake-region--raised {
-  bottom: calc(var(--toast-offset) + 56px);
 }
 
 .wake-pill {

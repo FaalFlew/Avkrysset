@@ -53,6 +53,8 @@ export const useUIStore = defineStore("ui", {
       undo: false,
     } as ToastState,
     _timeoutId: null as number | null,
+    /** Rendered height of the visible toast in px (measured by ToastNotification; 0 = unknown). */
+    toastHeight: 0,
     /** When the current toast hides (performance.now() ms), and the time left while paused. */
     _toastDeadline: 0,
     _toastRemaining: null as number | null,
@@ -152,6 +154,11 @@ export const useUIStore = defineStore("ui", {
       const remaining = Math.max(this._toastRemaining, 1500);
       this._toastRemaining = null;
       this._startToastTimer(remaining);
+    },
+
+    /** ToastNotification reports the toast's rendered height (what stacks above it moves up). */
+    setToastHeight(px: number) {
+      this.toastHeight = Number.isFinite(px) && px > 0 ? Math.round(px) : 0;
     },
 
     hideToast() {

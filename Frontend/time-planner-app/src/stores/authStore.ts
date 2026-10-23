@@ -9,6 +9,7 @@ import { defineStore } from "pinia";
 import { authService } from "@/services/authService";
 import { abortSessionRequests } from "@/services/apiService";
 import { isSessionChangedError, SessionChangedError } from "@/lib/apiErrors";
+import { jwtClaims } from "@/lib/jwt";
 import { useUIStore } from "./uiStore";
 import type { AuthResponse } from "@/types";
 import type {
@@ -95,16 +96,46 @@ export const useAuthStore = defineStore("auth", {
     },
 
     /**
+     * Follow what another tab did to the shared tokens in localStorage (the `storage` event, and
+     * before a refresh result is used):
+     * - tokens cleared (logout / dead session there) → end this tab's session too;
+     * - rotated tokens of the same user (that tab refreshed) → adopt them, same session, so the
+     *   tabs don't fight over the one refresh token the server keeps;
+     * - tokens of another user, or a login while this tab is a guest → a new session here too.
+     * A half-written pair (one key updated, the other not yet) is ignored until it is complete.
+     */
+    _syncFromStorage() {
+      const access = localStorage.getItem("accessToken");
+      const refresh = localStorage.getItem("refreshToken");
+      if (!access && !refresh) {
+        if (this.accessToken || this.refreshToken) this._clearTokens();
+        return;
+      }
+      if (!access || !refresh || refresh === this.refreshToken) return;
+
+      const hadSession = !!(this.accessToken || this.refreshToken);
+      const sameUser = hadSession && jwtClaims(access)?.sub === jwtClaims(this.accessToken)?.sub;
+      if (!sameUser) this._advanceSession();
+      this.accessToken = access;
+      this.refreshToken = refresh;
+      this.status = "loggedIn";
+    },
+
+    /**
      * Exchange the refresh token for new tokens (apiService shares one call per session).
-     * If the session ended while the server was answering (logout, or a new login), the new tokens
-     * are discarded — never stored — the stray refresh token is revoked on the server (best effort)
-     * and SessionChangedError is thrown. A failed refresh throws "Session expired"; ending the
-     * session is up to the caller (the 401 handler logs out; a background refresh stays quiet).
+     * - The session ended meanwhile (logout here or in another tab, or a new login): the new tokens
+     *   are discarded — never stored — the stray refresh token is revoked on the server (best
+     *   effort) and SessionChangedError is thrown.
+     * - Another tab refreshed meanwhile (its rotated tokens are in localStorage): ours are
+     *   discarded and revoked as well, and the call resolves with that tab's tokens adopted.
+     * - A failure rejects with the original error, so the caller can tell a refused token
+     *   (400/401/403: session over) from a cold or unreachable server (keep the session). Ending
+     *   the session is up to the caller (the 401 handler; a background refresh stays quiet).
      */
     async handleTokenRefresh() {
       // 1. Ensure we have a refresh token to begin with.
-      const currentRefreshToken = this.refreshToken;
-      if (!currentRefreshToken) {
+      const usedRefreshToken = this.refreshToken;
+      if (!usedRefreshToken) {
         throw new Error("No refresh token available.");
       }
       const epoch = this.sessionEpoch;
@@ -112,22 +143,27 @@ export const useAuthStore = defineStore("auth", {
       let tokens: AuthResponse;
       try {
         // 2. Call the service to get new tokens.
-        tokens = await authService.refresh(currentRefreshToken);
+        tokens = await authService.refresh(usedRefreshToken);
       } catch (error) {
+        this._syncFromStorage();
         if (this.sessionEpoch !== epoch) throw new SessionChangedError();
+        // Refused because another tab rotated the token first: carry on with its tokens.
+        if (this.refreshToken && this.refreshToken !== usedRefreshToken) return;
         console.error("Failed to refresh token:", error);
-        // 3. Throw so the caller knows the refresh failed.
-        throw new Error("Session expired. Please log in again.");
+        throw error;
       }
 
-      if (this.sessionEpoch !== epoch) {
-        // The user logged out (or in again) while the server was waking up: these tokens belong to
-        // a session that is over. Restoring them would sign the user back in.
+      this._syncFromStorage();
+      if (this.sessionEpoch !== epoch || localStorage.getItem("refreshToken") !== usedRefreshToken) {
+        // The user logged out (here or in another tab) or signed in again while the server was
+        // waking up, or another tab already rotated the token: these tokens are not ours to keep.
+        // Restoring them would sign the user back in.
         authService.revokeRefreshToken(tokens.refreshToken);
-        throw new SessionChangedError();
+        if (this.sessionEpoch !== epoch || !this.refreshToken) throw new SessionChangedError();
+        return; // same session, continuing with the other tab's tokens
       }
 
-      // 4. Same session: store the new tokens.
+      // 3. Same session: store the new tokens.
       this._setTokens(tokens.accessToken, tokens.refreshToken);
     },
 
@@ -259,6 +295,31 @@ export const useAuthStore = defineStore("auth", {
     },
   },
 });
+
+const TOKEN_KEYS = new Set(["accessToken", "refreshToken"]);
+
+/** What this module needs from a `storage` event (StorageEvent in browsers, a stub in tests). */
+interface StorageChange {
+  key: string | null;
+}
+
+/**
+ * Keep this tab's session in step with the others (they share the tokens in localStorage): a
+ * logout elsewhere ends it here, a refresh elsewhere is adopted (see `_syncFromStorage`). Call once
+ * at startup (main.ts). Returns the function that stops listening.
+ */
+export function syncSessionAcrossTabs(
+  store: ReturnType<typeof useAuthStore> = useAuthStore(),
+  target: Pick<EventTarget, "addEventListener" | "removeEventListener"> = window
+): () => void {
+  const onStorage = (event: Event) => {
+    const key = (event as unknown as StorageChange).key;
+    // `key` is null when another tab called localStorage.clear().
+    if (key === null || TOKEN_KEYS.has(key)) store._syncFromStorage();
+  };
+  target.addEventListener("storage", onStorage);
+  return () => target.removeEventListener("storage", onStorage);
+}
 
 /**
  * Run an API call for the current session. If the session changes before it settles (logout, a

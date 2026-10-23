@@ -15,11 +15,18 @@ import CategoryChips from "@/components/planner/CategoryChips.vue";
 import DurationChips from "@/components/planner/DurationChips.vue";
 import CategoryEditor from "./CategoryEditor.vue";
 import { useTasks } from "@/composables/useTasks";
+import { onSessionChange } from "@/composables/useSessionBound";
+import { isMutationSlow } from "@/services/slowRequests";
 
 const props = withDefaults(defineProps<{ templateToEdit?: TaskTemplate | null }>(), { templateToEdit: null });
 const open = defineModel<boolean>("open", { default: false });
 
 const { categories, addTemplate, updateTemplate } = useTasks();
+
+// The template belongs to the session it was opened in: close when that session ends.
+onSessionChange(() => {
+  open.value = false;
+});
 
 const isEditing = computed(() => !!props.templateToEdit);
 const title = ref("");
@@ -122,7 +129,7 @@ async function save(): Promise<void> {
     <template #footer="{ close }">
       <UiButton variant="ghost" @click="close('button')">Cancel</UiButton>
       <UiButton variant="primary" type="submit" form="template-form" :loading="saving">
-        {{ isEditing ? "Save" : "Add template" }}
+        {{ saving && isMutationSlow ? "Waking up server…" : isEditing ? "Save" : "Add template" }}
       </UiButton>
     </template>
   </UiDialog>
