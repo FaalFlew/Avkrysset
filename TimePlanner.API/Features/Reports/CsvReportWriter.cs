@@ -33,19 +33,16 @@ public static class CsvReportWriter
 
     public static readonly string[] Header = { "Section", "Key", "Label", "Category", "Hours", "Share %" };
 
+    /// <summary>Columns of the task list CSV (<see cref="WriteTasks"/>).</summary>
+    public static readonly string[] TaskHeader =
+    {
+        "Date", "Weekday", "Start", "End", "End date", "Duration (h)", "Duration", "Title", "Category", "Template",
+        "Organization", "Created by", "Assigned to", "Created at"
+    };
+
     public static byte[] Write(ReportModel model)
     {
-        var (delimiter, decimalSeparator) = ReportLocale.CsvStyleFor(model.LocaleCulture);
-        var csv = new Writer(delimiter, decimalSeparator);
-
-        csv.Comment("Time Planner analytics export");
-        csv.Comment($"Range: {model.RangeLabel}");
-        csv.Comment($"Time zone: {model.TimeZoneLabel}");
-        // ISO-style local time (not culture-formatted) so the line is unambiguous and machine-readable.
-        var generated = TaskAnalyticsBreakdown.ToLocal(model.GeneratedAtUtc, model.TimeZone)
-            .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        csv.Comment($"Generated: {generated} ({model.TimeZoneId})");
-        csv.Comment($"Document ID: {model.DocumentId}");
+        var csv = Begin(model, "Time Planner analytics export");
 
         csv.Row(Header);
 
@@ -84,6 +81,74 @@ public static class CsvReportWriter
 
         return csv.ToBytes();
     }
+
+    /// <summary>
+    /// The task list CSV (docs/plans/analytics-task-list.md), shared with the browser's guest export
+    /// (src/lib/taskListCsv.ts): same encoding, quoting, delimiter/decimal and formula guard as <see cref="Write"/>.
+    /// <code>
+    /// # Time Planner task list export
+    /// # Range: … / # Time zone: … / # Generated: … / # Document ID: …   (as in the analytics CSV)
+    /// Date,Weekday,Start,End,End date,Duration (h),Duration,Title,Category,Template,Organization,Created by,Assigned to,Created at
+    /// 2026-10-05,Monday,08:00,09:30,2026-10-05,1.50,1:30,Deep work,Work,Focus,,Ada Lovelace,,2026-10-01 12:00
+    /// </code>
+    /// One row per task in list order (<see cref="ReportModel.Tasks"/>). Times are local to the report's zone:
+    /// Date/Weekday/Start = the start's local date, the culture's weekday name and 24-hour "HH:mm"; End/End date = the
+    /// end's local "HH:mm" and date; Duration (h) = hours with 2 decimals (locale decimal separator); Duration =
+    /// "h:mm" rounded to whole minutes; Category = the task's category, or the organization's name for an organization
+    /// task; Template = its title, "Deleted template", or empty; Organization = empty for a personal task; Assigned to =
+    /// assignee names joined with ", " (empty for a personal task); Created at = local "yyyy-MM-dd HH:mm".
+    /// </summary>
+    public static byte[] WriteTasks(ReportModel model)
+    {
+        var csv = Begin(model, "Time Planner task list export");
+        var zone = model.TimeZone;
+
+        csv.Row(TaskHeader);
+        foreach (var task in model.Tasks)
+        {
+            var start = ReportTaskList.LocalStart(task, zone);
+            var end = ReportTaskList.LocalEnd(task, zone);
+            csv.Row(
+                Date(start),
+                ReportFormatting.Weekday(start, model.Culture),
+                Clock(start),
+                Clock(end),
+                Date(end),
+                csv.Hours(task.DurationHours),
+                ReportFormatting.ClockDuration(task.DurationHours),
+                task.Title,
+                task.CategoryName,
+                task.TemplateTitle ?? "",
+                task.OrganizationName ?? "",
+                task.CreatedByDisplayName,
+                string.Join(", ", task.AssigneeNames),
+                LocalDateTime(task.CreatedOnUtc, zone));
+        }
+
+        return csv.ToBytes();
+    }
+
+    /// <summary>A writer in the model's CSV style with the metadata rows written.</summary>
+    private static Writer Begin(ReportModel model, string title)
+    {
+        var (delimiter, decimalSeparator) = ReportLocale.CsvStyleFor(model.LocaleCulture);
+        var csv = new Writer(delimiter, decimalSeparator);
+
+        csv.Comment(title);
+        csv.Comment($"Range: {model.RangeLabel}");
+        csv.Comment($"Time zone: {model.TimeZoneLabel}");
+        // ISO-style local time (not culture-formatted) so the line is unambiguous and machine-readable.
+        csv.Comment($"Generated: {LocalDateTime(model.GeneratedAtUtc, model.TimeZone)} ({model.TimeZoneId})");
+        csv.Comment($"Document ID: {model.DocumentId}");
+        return csv;
+    }
+
+    private static string LocalDateTime(DateTime utcInstant, TimeZoneInfo timeZone) =>
+        TaskAnalyticsBreakdown.ToLocal(utcInstant, timeZone).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+    private static string Date(DateTime local) => local.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static string Clock(DateTime local) => local.ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>Quotes a cell per RFC 4180 when needed and neutralizes spreadsheet formulas.</summary>
     public static string Cell(string value, char delimiter)

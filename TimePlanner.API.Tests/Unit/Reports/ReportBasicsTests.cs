@@ -107,6 +107,30 @@ public sealed class ReportBasicsTests
     }
 
     [Fact]
+    public void Cjk_radicals_that_share_an_ideographs_glyph_are_unmapped_so_pdf_text_maps_back_to_the_ideograph()
+    {
+        using var stream = typeof(ReportFonts).Assembly.GetManifestResourceStream("ReportFonts.NotoSansCJKsc-Regular.otf")!;
+        var font = new byte[stream.Length];
+        stream.ReadExactly(font);
+        var before = new System.Collections.BitArray(0x110000);
+        ReportFonts.AddCoverage(font, before);
+        Assert.True(before[0x2F47] && before[0x65E5]); // Kangxi radical "sun" and 日: one glyph in the file
+
+        var unmapped = ReportFonts.UnmapSharedCjkRadicals(font);
+
+        var after = new System.Collections.BitArray(0x110000);
+        ReportFonts.AddCoverage(font, after);
+        Assert.InRange(unmapped, 300, 700); // ~318 shared radicals in each of the format 4 and 12 subtables
+        Assert.False(after[0x2F47]);
+        Assert.True(after[0x65E5]);
+        Assert.True(after[0x2E80]); // a radical with its own glyph stays
+        Assert.Equal(0, ReportFonts.UnmapSharedCjkRadicals(font)); // idempotent
+
+        // The registered fonts are patched: a typed radical is reported (renders blank), the ideograph is covered.
+        Assert.Equal(new[] { 0x2F47 }, ReportFonts.MissingCodePoints(new[] { "日⽇" }));
+    }
+
+    [Fact]
     public void Uncovered_scripts_are_reported_by_code_point()
     {
         var missing = ReportFonts.MissingCodePoints(new[] { "Work ภาษาไทย" });

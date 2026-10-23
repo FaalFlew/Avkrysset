@@ -56,10 +56,50 @@ public static class ReportFormatting
                 return (string.Create(CultureInfo.InvariantCulture, $"Week {week}"),
                         string.Create(CultureInfo.InvariantCulture, $"W{week}"));
             default:
-                return (Ltr(bucketStart.ToString("D", culture)),
+                return (DayLabel(bucketStart, culture),
                         $"{Ltr(format.GetAbbreviatedDayName(bucketStart.DayOfWeek))} {bucketStart.Day.ToString(culture)}");
         }
     }
+
+    /// <summary>A calendar day in the culture's long date format: "Monday, October 5, 2026" (en-US), "mandag 5. oktober 2026" (nb-NO).</summary>
+    public static string DayLabel(DateTime day, CultureInfo culture) => Ltr(day.ToString("D", culture));
+
+    /// <summary>The culture's full weekday name of a calendar day: "Monday" (en-US), "mandag" (nb-NO).</summary>
+    public static string Weekday(DateTime day, CultureInfo culture) => Ltr(culture.DateTimeFormat.GetDayName(day.DayOfWeek));
+
+    /// <summary>A local wall-clock time in the culture's short time format: "9:30 AM" (en-US), "09:30" (nb-NO).</summary>
+    public static string Time(DateTime local, CultureInfo culture) => Ltr(local.ToString("t", culture));
+
+    /// <summary>
+    /// Compact duration rounded to whole minutes, like the app (src/lib/format.ts formatDuration):
+    /// 0.25 → "15m", 1 → "1h", 1.5 → "1h 30m", 0 → "0m".
+    /// </summary>
+    public static string Duration(double hours)
+    {
+        var minutes = WholeMinutes(hours);
+        if (minutes < 60)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{minutes}m");
+        }
+
+        var (h, m) = (minutes / 60, minutes % 60);
+        return m == 0
+            ? string.Create(CultureInfo.InvariantCulture, $"{h}h")
+            : string.Create(CultureInfo.InvariantCulture, $"{h}h {m}m");
+    }
+
+    /// <summary>Duration as hours:minutes rounded to whole minutes: 1.5 → "1:30", 0.25 → "0:15", 25 → "25:00".</summary>
+    public static string ClockDuration(double hours)
+    {
+        var minutes = WholeMinutes(hours);
+        return string.Create(CultureInfo.InvariantCulture, $"{minutes / 60}:{minutes % 60:D2}");
+    }
+
+    /// <summary>"1 task", "3 tasks", "1,234 tasks" (count in the culture's style).</summary>
+    public static string Tasks(int count, CultureInfo culture) => $"{Count(count, culture)} {(count == 1 ? "task" : "tasks")}";
+
+    /// <summary>Hours as whole minutes with JavaScript's Math.round (half up); negative and non-finite values are 0.</summary>
+    private static long WholeMinutes(double hours) => (long)Math.Max(0, Math.Floor(Finite(hours) * 60 + 0.5));
 
     /// <summary>
     /// "Europe/Oslo (UTC+02:00)"; "Europe/Oslo (UTC+01:00/+02:00)" when the offset changes within the range; "UTC" for UTC.

@@ -72,11 +72,34 @@ export function formatCsvNumber(value: number, digits: number, decimal: "." | ",
   return decimal === "," ? text.replace(".", ",") : text;
 }
 
-/** A row cell: text (guarded against formulas) or an already formatted number. */
-type Cell = { text: string } | { num: string } | null;
+/** A row cell: text (guarded against formulas), an already formatted number, or empty (null). */
+export type CsvCell = { text: string } | { num: string } | null;
 
-const text = (value: string | null | undefined): Cell => ({ text: value ?? "" });
-const num = (value: string): Cell => ({ num: value });
+export const csvText = (value: string | null | undefined): CsvCell => ({ text: value ?? "" });
+export const csvNum = (value: string): CsvCell => ({ num: value });
+const text = csvText;
+const num = csvNum;
+
+/** One CSV line: cells quoted per RFC 4180, text cells guarded against formulas. */
+export function csvRow(cells: readonly CsvCell[], delimiter: string): string {
+  return cells
+    .map((cell) => {
+      if (cell === null) return "";
+      if ("num" in cell) return quoteCsvCell(cell.num, delimiter);
+      return quoteCsvCell(guardFormula(cell.text), delimiter);
+    })
+    .join(delimiter);
+}
+
+/** A metadata line (`# Range: …`): one quoted-if-needed cell. */
+export function csvMetaLine(line: string, delimiter: string): string {
+  return quoteCsvCell(line, delimiter);
+}
+
+/** The file text: BOM + lines joined and terminated by CRLF. */
+export function csvDocument(lines: readonly string[]): string {
+  return CSV_BOM + lines.join(CSV_EOL) + CSV_EOL;
+}
 
 export interface CsvPeriodRow {
   key: string;
@@ -126,17 +149,8 @@ export function buildAnalyticsCsv(input: AnalyticsCsvInput, format: CsvNumberFor
   const count = (n: number | null) => (n === null ? null : num(String(Math.round(n))));
 
   const lines: string[] = [];
-  const meta = (line: string) => lines.push(quoteCsvCell(line, delimiter));
-  const row = (cells: Cell[]) =>
-    lines.push(
-      cells
-        .map((cell) => {
-          if (cell === null) return "";
-          if ("num" in cell) return quoteCsvCell(cell.num, delimiter);
-          return quoteCsvCell(guardFormula(cell.text), delimiter);
-        })
-        .join(delimiter)
-    );
+  const meta = (line: string) => lines.push(csvMetaLine(line, delimiter));
+  const row = (cells: CsvCell[]) => lines.push(csvRow(cells, delimiter));
 
   meta("# Time Planner analytics export");
   meta(`# Range: ${input.rangeLabel}`);
@@ -189,7 +203,7 @@ export function buildAnalyticsCsv(input: AnalyticsCsvInput, format: CsvNumberFor
     share(input.withoutTemplateHours),
   ]);
 
-  return CSV_BOM + lines.join(CSV_EOL) + CSV_EOL;
+  return csvDocument(lines);
 }
 
 const MONTH_KEY = /^(\d{4})-(\d{2})$/;

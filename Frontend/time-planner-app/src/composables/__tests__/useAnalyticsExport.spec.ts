@@ -17,6 +17,8 @@ import {
 import type { AnalyticsSelection } from "@/lib/analyticsBuckets";
 import type { AnalyticsSnapshot } from "@/composables/useStats";
 import type { PaperSize } from "@/lib/paper";
+import { buildTaskListRows } from "@/lib/taskList";
+import { combineDateAndTime, formatDateRange, formatWeekdayLong } from "@/lib/datetime";
 
 interface Pending {
   url: string;
@@ -233,6 +235,89 @@ describe("useAnalyticsExport — server report", () => {
     await expect(done).resolves.toBe("cancelled");
     expect(pending[0]!.config.signal.aborted).toBe(true);
     expect(deps.save).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAnalyticsExport — task list CSV", () => {
+  it("signed in: GET personal.tasks.csv for the selection (no paper), saved under the server's name", async () => {
+    const { exporter, deps, pending } = setup({ view: "weekly", weekRange: { start: 40, end: 42 } });
+    const done = exporter.downloadReport("tasks-csv");
+    expect(exporter.format.value).toBe("tasks-csv");
+    expect(pending[0]!.url).toBe("/reports/personal.tasks.csv?view=weekly&year=2026&from=40&to=42&locale=nb-NO");
+    expect(pending[0]!.config.responseType).toBe("blob");
+    const blob = new Blob(["﻿# Time Planner task list export\r\n"], { type: "text/csv" });
+    pending[0]!.resolve({
+      data: blob,
+      headers: new AxiosHeaders({
+        "content-disposition": "attachment; filename=time-planner-tasks-2026-W40_2026-W42.csv",
+        "x-document-id": "TP-20261017-ABCDEFGH",
+      }),
+    });
+    await expect(done).resolves.toBe("success");
+    expect(deps.save).toHaveBeenCalledWith(blob, "time-planner-tasks-2026-W40_2026-W42.csv");
+    expect(deps.announce).toHaveBeenCalledWith("Task list downloaded");
+    expect(exporter.documentId.value).toBe("TP-20261017-ABCDEFGH");
+  });
+
+  it("signed in: falls back to a dated task file name; errors name the task list", async () => {
+    const { exporter, deps, pending } = setup({ view: "daily", dailyWeek: 43 });
+    let done = exporter.downloadReport("tasks-csv");
+    expect(pending[0]!.url).toBe("/reports/personal.tasks.csv?view=daily&year=2026&from=43&to=43&locale=nb-NO");
+    pending[0]!.resolve({ data: new Blob(["x"], { type: "text/csv" }), headers: {} });
+    await done;
+    expect(deps.save).toHaveBeenCalledWith(expect.any(Blob), "time-planner-tasks-daily-2026-10-11.csv");
+
+    done = exporter.downloadReport("tasks-csv");
+    pending[1]!.reject({ response: { status: 500, data: new Blob(["{}"]), headers: {} } });
+    await expect(done).resolves.toBe("error");
+    expect(deps.notifyError).toHaveBeenCalledWith(
+      "Couldn't create the task list — something went wrong on our side. Please try again."
+    );
+  });
+
+  it("guest: builds the task list CSV in the browser (nb-NO) and saves it as time-planner-tasks-…", async () => {
+    const { exporter, deps } = setup();
+    const selection: AnalyticsSelection = {
+      view: "weekly",
+      year: 2026,
+      monthRange: { start: 0, end: 11 },
+      weekRange: { start: 42, end: 42 },
+      dailyWeek: 42,
+    };
+    const rows = buildTaskListRows(
+      [
+        {
+          id: "t1",
+          title: "Plan; review",
+          start: combineDateAndTime("2026-10-14", "09:00"),
+          duration: 1.5,
+          categoryId: "c1",
+          categoryName: "Work",
+          categoryColor: "#2F7FE0",
+        },
+      ],
+      { categories: [], templates: [], currentUserId: null }
+    );
+    expect(
+      exporter.downloadGuestTaskCsv(rows, selection, {
+        timeZoneLabel: "UTC",
+        generatedAt: "2026-10-17 10:00 (UTC)",
+      })
+    ).toBe(true);
+    expect(deps.get).not.toHaveBeenCalled();
+    const [blob, filename] = (deps.save as ReturnType<typeof vi.fn>).mock.calls[0]! as [Blob, string];
+    expect(filename).toBe("time-planner-tasks-2026-W42.csv");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    expect(text).toContain("# Time Planner task list export\r\n");
+    // One locale (deps.locale() = nb-NO) for the delimiter, the decimal, the weekday and the range label.
+    expect(text).toContain(`# Range: Week 42 · ${formatDateRange("2026-10-12", "2026-10-18", "nb-NO")}\r\n`);
+    expect(formatWeekdayLong("2026-10-14", "nb-NO")).toBe("onsdag");
+    expect(text).toContain(
+      `2026-10-14;onsdag;09:00;10:30;2026-10-14;1,50;1:30;"Plan; review";Work;;;You;;\r\n`
+    );
+    expect(deps.announce).toHaveBeenCalledWith("Task list downloaded");
   });
 });
 

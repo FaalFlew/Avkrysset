@@ -65,6 +65,9 @@ describe("fallbackExportFileName", () => {
   it("names the view and today's date", () => {
     expect(fallbackExportFileName("weekly", "pdf", "2026-10-11")).toBe("time-planner-analytics-weekly-2026-10-11.pdf");
     expect(fallbackExportFileName("monthly", "csv", "2027-01-01")).toBe("time-planner-analytics-monthly-2027-01-01.csv");
+    expect(fallbackExportFileName("daily", "csv", "2026-10-17", "time-planner-tasks")).toBe(
+      "time-planner-tasks-daily-2026-10-17.csv"
+    );
   });
 });
 

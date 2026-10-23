@@ -37,9 +37,39 @@ internal static class ReportTestData
         DocumentId = DocumentId
     };
 
+    public static readonly Guid AdaId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+    public const string Ada = "Ada Lovelace";
+
+    /// <summary>A model from bare analytics rows: they become tasks "Task 01", "Task 02", … created by Ada.</summary>
     public static ReportModel Build(ReportRequest request, IEnumerable<AnalyticsTaskRow> tasks,
         IReadOnlyDictionary<Guid, AnalyticsTemplate>? templates = null) =>
+        Build(request, tasks.Select((row, i) => new ReportTaskSource(
+            IdOf(i + 1), $"Task {i + 1:D2}", row, null, AdaId, Ada, Array.Empty<string>(), GeneratedAt.AddDays(-30))), templates);
+
+    public static ReportModel Build(ReportRequest request, IEnumerable<ReportTaskSource> tasks,
+        IReadOnlyDictionary<Guid, AnalyticsTemplate>? templates = null) =>
         ReportModelBuilder.Build(request, tasks, templates ?? new Dictionary<Guid, AnalyticsTemplate>());
+
+    /// <summary>A personal task (or, with <paramref name="organizationId"/>, an organization task assigned to Ada).</summary>
+    public static ReportTaskSource PlannerTask(string title, string startUtc, double hours, Guid? id = null, Guid? category = null,
+        string name = "Work", string color = "#2F7FE0", Guid? template = null, Guid? organizationId = null,
+        string? organizationName = null, string createdBy = Ada, Guid? createdById = null, string[]? assignees = null,
+        string createdOnUtc = "2026-09-01T10:15:00Z")
+    {
+        var start = Utc(startUtc);
+        var row = organizationId is Guid org
+            ? AnalyticsTaskRow.ForOrganizationTask(start, hours, org, organizationName ?? "Organization")
+            : new AnalyticsTaskRow(start, hours, category ?? Work, name, color, template);
+        // Default id: derived from the title, so it is the same in every run (golden files).
+        return new ReportTaskSource(id ?? new Guid(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(title))), title, row,
+            organizationId is null ? null : organizationName ?? "Organization",
+            createdById ?? AdaId, createdBy, assignees ?? Array.Empty<string>(), Utc(createdOnUtc));
+    }
+
+    public static Guid IdOf(int value) => new(value, 0, 0, new byte[8]);
+
+    public static DateTime Utc(string instant) =>
+        DateTime.Parse(instant, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
 
     /// <summary>Text of every page in reading order, with all whitespace (incl. NBSP) collapsed to single spaces.</summary>
     public static string PdfText(byte[] pdf)

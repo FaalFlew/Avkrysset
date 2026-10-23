@@ -92,9 +92,17 @@ export function parseContentDisposition(header: string | null | undefined): stri
   return null;
 }
 
-/** `time-planner-analytics-weekly-2026-10-11.pdf` — used when the server sends no file name. */
-export function fallbackExportFileName(view: AnalyticsView, extension: string, today: DateKey): string {
-  return `time-planner-analytics-${view}-${today}.${extension}`;
+/**
+ * `time-planner-analytics-weekly-2026-10-11.pdf` (`time-planner-tasks-…` for the task list) — used
+ * when the server sends no file name.
+ */
+export function fallbackExportFileName(
+  view: AnalyticsView,
+  extension: string,
+  today: DateKey,
+  prefix = "time-planner-analytics"
+): string {
+  return `${prefix}-${view}-${today}.${extension}`;
 }
 
 /** The DOM pieces saveBlob() needs (injectable for tests). */

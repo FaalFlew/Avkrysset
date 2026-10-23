@@ -1,6 +1,6 @@
 <!-- src/components/TaskAnalytics.vue — the /analytics page body (rendered inside the app shell). -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { CalendarRange, ChartColumn } from "lucide-vue-next";
 import { UiButton, UiEmptyState, UiErrorState, UiPageHeader } from "@/components/ui";
 import { useStats, type AnalyticsView } from "@/composables/useStats";
@@ -21,9 +21,15 @@ import CategoryDonut from "./analytics/CategoryDonut.vue";
 import TemplateBreakdown from "./analytics/TemplateBreakdown.vue";
 import ExportMenu from "./analytics/ExportMenu.vue";
 import PrintReportHeader from "./analytics/PrintReportHeader.vue";
+import TaskList from "./analytics/TaskList.vue";
 import { selectionShortLabel, selectionSummary } from "./analytics/format";
 import { installPrintSupport } from "@/composables/usePrintMode";
 import { usePaperPreference } from "@/lib/paper";
+import { useAnalyticsTasks } from "@/composables/useAnalyticsTasks";
+import { useTaskEditor } from "@/composables/useTaskEditor";
+import { useTaskStore } from "@/stores/taskStore";
+import { useAuthStore } from "@/stores/authStore";
+import type { TaskListRow } from "@/lib/taskList";
 
 const { availableYears, availableIsoYears, useFilteredStats } = useStats();
 const today = useToday();
@@ -141,6 +147,44 @@ const state = computed<PageState>(() => {
 
 const retrying = computed(() => isLoading.value || isRefetching.value);
 
+// --- Task list ------------------------------------------------------------------------------
+// The same range as the analytics request; categories (incl. the organization colors) come from
+// the analytics data on screen. A task changed from the list's editor refreshes both.
+const taskList = useAnalyticsTasks({
+  selection: currentSelection,
+  categories: () => snapshot.value?.categories ?? [],
+  onTasksChanged: () => void stats.refetch(),
+});
+const { rows: taskRows, isLoading: tasksLoading, isRefetching: tasksRefetching, error: tasksError } = taskList;
+/** Range of the rows on screen (they lag the filters while the list refetches). */
+const taskScopeLabel = computed(() => selectionShortLabel(taskList.selection.value ?? currentSelection.value));
+
+/** The task list's category filter (chips, or a click in the donut). */
+const categoryFilter = ref<string | null>(null);
+const taskListRef = ref<InstanceType<typeof TaskList> | null>(null);
+
+function onCategorySelect(id: string): void {
+  if (categoryFilter.value === id) {
+    categoryFilter.value = null; // clicking the selected category again clears the filter
+    return;
+  }
+  categoryFilter.value = id;
+  void nextTick(() => taskListRef.value?.reveal());
+}
+
+const editor = useTaskEditor();
+const taskStore = useTaskStore();
+const auth = useAuthStore();
+
+/** Open a task of the list in the editor (read-only for tasks the user may not edit). */
+function openTask(row: TaskListRow): void {
+  // Signed in, the store only holds the planner's week: make the task known to it so the
+  // editor's Delete (with Undo) works from here too. Guests hold every task already.
+  if (auth.isAuthenticated) taskStore.replaceTaskLocally(row.task);
+  // Read-only org tasks show the list's grouping (the organization), not the creator's category.
+  editor.openEdit(row.task, null, { category: row.category });
+}
+
 // --- Print ("Print / Save as PDF" and the browser's own Print) ------------------------------
 const { paper } = usePaperPreference();
 let uninstallPrint: (() => void) | null = null;
@@ -177,6 +221,7 @@ const liveMessage = computed(() => {
           :page-state="state"
           :refetching="isRefetching"
           :range-label="shownRangeLabel"
+          :task-rows="taskRows"
         />
       </template>
       <AnalyticsFilters
@@ -260,6 +305,8 @@ const liveMessage = computed(() => {
               :scope-label="scopeLabel"
               :loading="state === 'loading'"
               :refetching="isRefetching"
+              :selected-id="categoryFilter"
+              @select="onCategorySelect"
             />
           </div>
 
@@ -270,6 +317,19 @@ const liveMessage = computed(() => {
             :scope-label="scopeLabel"
             :loading="state === 'loading'"
             :refetching="isRefetching"
+          />
+
+          <TaskList
+            ref="taskListRef"
+            v-model:category="categoryFilter"
+            :rows="taskRows"
+            :loading="tasksLoading"
+            :refetching="tasksRefetching"
+            :dim="tasksRefetching && !isRefetching"
+            :error="tasksError"
+            :scope-label="taskScopeLabel"
+            @open="openTask"
+            @retry="taskList.refetch()"
           />
         </div>
       </Transition>

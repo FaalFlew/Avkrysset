@@ -15,6 +15,16 @@ public enum ReportFormat
     Csv
 }
 
+/// <summary>
+/// Values of <c>ReportExports.Kind</c> (nvarchar(16)) besides the <see cref="ReportKind"/> names. Note: an
+/// organization task list would not fit as "OrganizationTasks" (17 characters) without widening the column.
+/// </summary>
+public static class ReportExportKinds
+{
+    /// <summary>A personal task list CSV (GET /api/reports/personal.tasks.csv).</summary>
+    public const string PersonalTasks = "PersonalTasks";
+}
+
 public enum PaperSize
 {
     A4,
@@ -73,6 +83,12 @@ public sealed record ReportModel
     /// <summary>Organization reports only (Phase 4); empty otherwise.</summary>
     public IReadOnlyList<ReportMember> Members { get; init; } = Array.Empty<ReportMember>();
 
+    /// <summary>
+    /// Every task of the range (the same rows the KPIs are computed from: count and summed hours are equal), ordered
+    /// by start, then title (ordinal), then id (ordinal); see <see cref="ReportTaskList"/>.
+    /// </summary>
+    public IReadOnlyList<ReportTask> Tasks { get; init; } = Array.Empty<ReportTask>();
+
     /// <summary>Locale culture name for storage and logs ("invariant" for the invariant culture).</summary>
     public string CultureName => string.IsNullOrEmpty(LocaleCulture.Name) ? "invariant" : LocaleCulture.Name;
 }
@@ -104,3 +120,29 @@ public sealed record ReportTemplate(
     bool IsWithoutTemplate);
 
 public sealed record ReportMember(string Name, string? Email, double Hours, double Share);
+
+/// <summary>One row of the task list. Instants are UTC; renderers show them in the report's zone.</summary>
+/// <param name="EndUtc">Start plus the duration (elapsed time, rounded to the millisecond like the frontend).</param>
+/// <param name="Title">As stored (may be blank for legacy data).</param>
+/// <param name="CategoryName">
+/// As in the category breakdown: the task's category, or the organization's name for an organization task.
+/// </param>
+/// <param name="CategoryColor">The category's color, or the organization's <c>OrganizationPalette</c> color.</param>
+/// <param name="TemplateTitle">Null without a template; "Deleted template" when the template no longer exists.</param>
+/// <param name="OrganizationName">The organization of an organization task; null for a personal task.</param>
+/// <param name="CreatedByDisplayName">The creator's display name, or their email when none is set.</param>
+/// <param name="AssigneeNames">Display names (fallback email) of an organization task's assignees, ordinal order.</param>
+public sealed record ReportTask(
+    Guid Id,
+    DateTime StartUtc,
+    DateTime EndUtc,
+    double DurationHours,
+    string Title,
+    string CategoryName,
+    string CategoryColor,
+    string? TemplateTitle,
+    string? OrganizationName,
+    string CreatedByDisplayName,
+    Guid CreatedByUserId,
+    IReadOnlyList<string> AssigneeNames,
+    DateTime CreatedOnUtc);
