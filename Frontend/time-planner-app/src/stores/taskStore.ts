@@ -87,6 +87,16 @@ export interface AddTaskOptions {
 
 export type NewTaskData = Omit<Task, "id" | "categoryName" | "categoryColor">;
 
+/**
+ * Keys of the error toasts of task actions (uiStore ToastOptions.key): when a retry of the same
+ * action succeeds, its stale error toast is dismissed — and only that one.
+ */
+export const TOAST_KEYS = {
+  addTask: "task:add",
+  updateTask: (id: string) => `task:update:${id}`,
+  deleteTask: (id: string) => `task:delete:${id}`,
+} as const;
+
 // Request bookkeeping (not reactive state).
 /** The signed-in initialization in flight, per session (a new login never joins an old one). */
 let initRequest: { epoch: number; promise: Promise<void> } | null = null;
@@ -401,7 +411,7 @@ export const useTaskStore = defineStore("tasks", {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       const fail = (message: string): null => {
-        if (!options.silent) uiStore.showToast(message, "error");
+        if (!options.silent) uiStore.showToast(message, "error", 4000, { key: TOAST_KEYS.addTask });
         return null;
       };
 
@@ -436,6 +446,7 @@ export const useTaskStore = defineStore("tasks", {
       taskMutations += 1;
       this.tasks.push(newTask);
       if (this.isInTodayList(newTask)) this.todayTasks.push(newTask);
+      uiStore.dismissToast(TOAST_KEYS.addTask); // a retry worked: its earlier error is stale
       return newTask;
     },
 
@@ -450,8 +461,11 @@ export const useTaskStore = defineStore("tasks", {
       const opts: UpdateTaskOptions = typeof options === "boolean" ? { silent: options } : options;
       const authStore = useAuthStore();
       const uiStore = useUIStore();
+      const toastKey = TOAST_KEYS.updateTask(updatedTask.id);
       const fail = (message: string, action?: ToastAction): false => {
-        if (!opts.silent) uiStore.showToast(message, "error", action ? 8000 : 4000, action ? { action } : {});
+        if (!opts.silent) {
+          uiStore.showToast(message, "error", action ? 8000 : 4000, action ? { action, key: toastKey } : { key: toastKey });
+        }
         return false;
       };
 
@@ -506,6 +520,7 @@ export const useTaskStore = defineStore("tasks", {
 
       this.replaceTaskLocally(updatedTask);
       taskMutations += 1;
+      uiStore.dismissToast(toastKey); // a retry worked: its earlier error is stale
       return true;
     },
 
@@ -606,10 +621,12 @@ export const useTaskStore = defineStore("tasks", {
             ? apiDataService.deleteOrganizationTask(original.organizationId!, taskId)
             : apiDataService.deleteTask(taskId)
         );
+      const toastKey = TOAST_KEYS.deleteTask(taskId);
       const deleted: Promise<boolean> = authStore.isAuthenticated
         ? request().then(
             () => {
               taskMutations += 1;
+              uiStore.dismissToast(toastKey); // a retry worked: its earlier error is stale
               return true;
             },
             (error: unknown) => {
@@ -618,7 +635,7 @@ export const useTaskStore = defineStore("tasks", {
               console.error(error);
               restore();
               this.refreshAfterRejection(error);
-              uiStore.showToast(apiErrorMessage(error, "Couldn't delete the task."), "error");
+              uiStore.showToast(apiErrorMessage(error, "Couldn't delete the task."), "error", 4000, { key: toastKey });
               return false;
             }
           )

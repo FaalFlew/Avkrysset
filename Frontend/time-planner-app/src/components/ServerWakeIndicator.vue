@@ -9,7 +9,7 @@
  * Position (lib/wakeIndicator.ts): bottom center like the toast (above the phone tab bar,
  * centered over the main column next to the sidebar/rail), raised above a visible toast by its
  * measured height. Hidden while a modal dialog / bottom sheet is open: there the dialog's Save
- * button says "Waking up server…" instead.
+ * button says "Waking up the server…" instead.
  * Accessibility: a persistent polite live region (outside the inert app) announces it once.
  */
 import { computed } from "vue";

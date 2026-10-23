@@ -129,7 +129,7 @@ async function save(): Promise<void> {
     <template #footer="{ close }">
       <UiButton variant="ghost" @click="close('button')">Cancel</UiButton>
       <UiButton variant="primary" type="submit" form="template-form" :loading="saving">
-        {{ saving && isMutationSlow ? "Waking up server…" : isEditing ? "Save" : "Add template" }}
+        {{ saving && isMutationSlow ? "Waking up the server…" : isEditing ? "Save" : "Add template" }}
       </UiButton>
     </template>
   </UiDialog>

@@ -10,6 +10,7 @@ import { authService } from "@/services/authService";
 import { abortSessionRequests } from "@/services/apiService";
 import { isSessionChangedError, SessionChangedError } from "@/lib/apiErrors";
 import { jwtClaims } from "@/lib/jwt";
+import { TOKEN_REFRESH_LOCK, withCrossTabLock } from "@/lib/crossTabLock";
 import { useUIStore } from "./uiStore";
 import type { AuthResponse } from "@/types";
 import type {
@@ -122,12 +123,16 @@ export const useAuthStore = defineStore("auth", {
     },
 
     /**
-     * Exchange the refresh token for new tokens (apiService shares one call per session).
+     * Exchange the refresh token for new tokens (apiService shares one call per tab and session).
+     * Tabs take turns (Web Locks, `tp-token-refresh`): they share one refresh token, and two tabs
+     * refreshing it at once could sign the user out of all of them. Inside the lock the stored
+     * tokens are read again — if another tab already rotated them, they are adopted without
+     * asking the server.
      * - The session ended meanwhile (logout here or in another tab, or a new login): the new tokens
      *   are discarded — never stored — the stray refresh token is revoked on the server (best
      *   effort) and SessionChangedError is thrown.
-     * - Another tab refreshed meanwhile (its rotated tokens are in localStorage): ours are
-     *   discarded and revoked as well, and the call resolves with that tab's tokens adopted.
+     * - Another tab refreshed meanwhile (its rotated tokens are in localStorage): those are adopted
+     *   and ours discarded (revoked unless it is the very pair that tab stored).
      * - A failure rejects with the original error, so the caller can tell a refused token
      *   (400/401/403: session over) from a cold or unreachable server (keep the session). Ending
      *   the session is up to the caller (the 401 handler; a background refresh stays quiet).
@@ -140,31 +145,40 @@ export const useAuthStore = defineStore("auth", {
       }
       const epoch = this.sessionEpoch;
 
-      let tokens: AuthResponse;
-      try {
-        // 2. Call the service to get new tokens.
-        tokens = await authService.refresh(usedRefreshToken);
-      } catch (error) {
+      await withCrossTabLock(TOKEN_REFRESH_LOCK, async () => {
+        // 2. While this tab waited for the lock, another tab may have refreshed (or logged out).
         this._syncFromStorage();
         if (this.sessionEpoch !== epoch) throw new SessionChangedError();
-        // Refused because another tab rotated the token first: carry on with its tokens.
-        if (this.refreshToken && this.refreshToken !== usedRefreshToken) return;
-        console.error("Failed to refresh token:", error);
-        throw error;
-      }
+        if (this.refreshToken && this.refreshToken !== usedRefreshToken) return; // adopted: no server call
 
-      this._syncFromStorage();
-      if (this.sessionEpoch !== epoch || localStorage.getItem("refreshToken") !== usedRefreshToken) {
-        // The user logged out (here or in another tab) or signed in again while the server was
-        // waking up, or another tab already rotated the token: these tokens are not ours to keep.
-        // Restoring them would sign the user back in.
-        authService.revokeRefreshToken(tokens.refreshToken);
-        if (this.sessionEpoch !== epoch || !this.refreshToken) throw new SessionChangedError();
-        return; // same session, continuing with the other tab's tokens
-      }
+        let tokens: AuthResponse;
+        try {
+          // 3. Call the service to get new tokens.
+          tokens = await authService.refresh(usedRefreshToken);
+        } catch (error) {
+          this._syncFromStorage();
+          if (this.sessionEpoch !== epoch) throw new SessionChangedError();
+          // Refused because another tab (without the lock) rotated the token first: use its tokens.
+          if (this.refreshToken && this.refreshToken !== usedRefreshToken) return;
+          console.error("Failed to refresh token:", error);
+          throw error;
+        }
 
-      // 3. Same session: store the new tokens.
-      this._setTokens(tokens.accessToken, tokens.refreshToken);
+        this._syncFromStorage();
+        const stored = localStorage.getItem("refreshToken");
+        if (this.sessionEpoch !== epoch || stored !== usedRefreshToken) {
+          // The user logged out (here or in another tab) or signed in again while the server was
+          // waking up, or another tab already rotated the token: these tokens are not ours to keep
+          // (restoring them could sign the user back in). Never revoke the pair another tab
+          // stored: the server answers concurrent refreshes of one token with the same pair.
+          if (tokens.refreshToken !== stored) authService.revokeRefreshToken(tokens.refreshToken);
+          if (this.sessionEpoch !== epoch || !this.refreshToken) throw new SessionChangedError();
+          return; // same session, continuing with the other tab's tokens
+        }
+
+        // 4. Same session: store the new tokens (inside the lock, so the next tab sees them).
+        this._setTokens(tokens.accessToken, tokens.refreshToken);
+      });
     },
 
     // Action to log in a user
@@ -240,6 +254,9 @@ export const useAuthStore = defineStore("auth", {
      * token being discarded — never waiting for a cold server. No toast.
      */
     async logout() {
+      // The tabs share one session: revoke its latest refresh token (another tab may have
+      // rotated it a moment ago, before this tab heard about it).
+      this._syncFromStorage();
       // We check refreshToken here because accessToken might be null but a session could exist.
       const refreshToken = this.refreshToken;
       this._clearTokens();

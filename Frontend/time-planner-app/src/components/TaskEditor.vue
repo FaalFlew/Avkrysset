@@ -589,7 +589,7 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
         <!-- While a modal is open the app-wide "Waking up the server…" pill stands down; the
              button says it instead. -->
         <UiButton variant="primary" type="submit" form="task-editor-form" :loading="saving">
-          {{ saving && isMutationSlow ? "Waking up server…" : isEditing ? "Save" : "Add task" }}
+          {{ saving && isMutationSlow ? "Waking up the server…" : isEditing ? "Save" : "Add task" }}
           <template v-if="!isCoarse" #trailing><UiKbd :keys="['Enter']" tone="onAccent" /></template>
         </UiButton>
       </template>

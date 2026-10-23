@@ -4,7 +4,7 @@
 // It shares the bottom-center spot with the toast: while a toast is visible the pill sits on top
 // of it, raised by the toast's measured height (1–3 lines) plus a gap. While a modal dialog or
 // bottom sheet is open the pill stands down — it would cover the sheet's content on phones — and
-// the dialog's own Save button says "Waking up server…" instead.
+// the dialog's own Save button says "Waking up the server…" instead.
 
 /** Space between the toast and the pill (px). */
 export const WAKE_TOAST_GAP_PX = 8;
