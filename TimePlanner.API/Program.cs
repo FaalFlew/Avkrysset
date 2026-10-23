@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TimePlanner.API.Data;
@@ -121,6 +122,10 @@ try
 
     // SIGN-OUT: POST /api/auth/logout is anonymous, so it is rate limited per client IP.
     builder.Services.AddLogoutRateLimiting(builder.Configuration);
+
+    // REFRESH TOKENS: grace period for the token replaced by a rotation ("Auth:RefreshTokenGraceSeconds", default 120).
+    builder.Services.Configure<RefreshTokenOptions>(builder.Configuration.GetSection(RefreshTokenOptions.Section));
+    builder.Services.TryAddSingleton(TimeProvider.System);
 
     // CORS POLICY SETUP (CRUCIAL FIX)
     builder.Services.AddCors(options =>

@@ -9,9 +9,10 @@ namespace TimePlanner.API.Features.Commands.Auth;
 //================================================================================
 // 1. The Command
 //================================================================================
-// Ends a session server-side by revoking the stored refresh token. It does not need a valid access token: the
-// session is revoked when the caller is signed in (valid JWT) OR when it presents the refresh token that is stored
-// for a user (also an expired one). The caller is never told whether anything was revoked.
+// Ends a session server-side by revoking the stored refresh tokens (the current one and the previous one kept for the
+// refresh grace period). It does not need a valid access token: the session is revoked when the caller is signed in
+// (valid JWT) OR when it presents the current or the previous refresh token of a user (also an expired one). The
+// caller is never told whether anything was revoked.
 public record LogoutCommand(string? RefreshToken = null) : IRequest;
 
 //================================================================================
@@ -25,29 +26,33 @@ public class LogoutCommandHandler : IRequestHandler<LogoutCommand>
 
     private readonly ApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<LogoutCommandHandler> _logger;
 
     public LogoutCommandHandler(
         ApplicationDbContext context,
         ICurrentUserService currentUserService,
+        TimeProvider timeProvider,
         ILogger<LogoutCommandHandler> logger)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
     public async Task Handle(LogoutCommand request, CancellationToken cancellationToken)
     {
-        // 1. A signed-in caller (valid access token): revoke their session, whatever refresh token is stored.
+        // 1. A signed-in caller (valid access token): revoke their session, whatever refresh tokens are stored.
         var userId = _currentUserService.UserId;
-        var revoked = userId is not null && await RevokeAsync(userId.Value, expectedToken: null, cancellationToken);
+        var revoked = userId is not null && await RevokeAsync(userId.Value, presentedToken: null, cancellationToken);
         if (revoked)
         {
-            _logger.LogInformation("User {UserId} logged out; refresh token revoked (access token).", userId);
+            _logger.LogInformation("User {UserId} logged out; refresh tokens revoked (access token).", userId);
         }
 
-        // 2. A presented refresh token: revoke the session it belongs to, even when it has expired.
+        // 2. A presented refresh token, current or previous: revoke the session it belongs to, even when it has expired
+        //    (the client may hold the previous token because it never received a rotation's response).
         var token = RefreshTokenComparison.Normalize(request.RefreshToken);
         if (token is null)
         {
@@ -56,18 +61,19 @@ public class LogoutCommandHandler : IRequestHandler<LogoutCommand>
 
         var candidates = await _context.Users
             .AsNoTracking()
-            .Where(u => u.RefreshToken == token)
-            .Select(u => new { u.Id, u.RefreshToken })
+            .Where(u => u.RefreshToken == token || u.PreviousRefreshToken == token)
+            .Select(u => new { u.Id, u.RefreshToken, u.PreviousRefreshToken })
             .Take(MaxCandidates)
             .ToListAsync(cancellationToken);
 
         foreach (var candidate in candidates)
         {
-            if (RefreshTokenComparison.FixedTimeEquals(token, candidate.RefreshToken)
-                && await RevokeAsync(candidate.Id, candidate.RefreshToken, cancellationToken))
+            var matches = RefreshTokenComparison.FixedTimeEquals(token, candidate.RefreshToken)
+                          | RefreshTokenComparison.FixedTimeEquals(token, candidate.PreviousRefreshToken);
+            if (matches && await RevokeAsync(candidate.Id, token, cancellationToken))
             {
                 revoked = true;
-                _logger.LogInformation("User {UserId} logged out; refresh token revoked (refresh token).", candidate.Id);
+                _logger.LogInformation("User {UserId} logged out; refresh tokens revoked (refresh token).", candidate.Id);
             }
         }
 
@@ -79,24 +85,26 @@ public class LogoutCommandHandler : IRequestHandler<LogoutCommand>
     }
 
     /// <summary>
-    /// Clears the refresh token in a single UPDATE. With <paramref name="expectedToken"/> only while that token is still
-    /// the stored one, so a refresh that rotated it first keeps its new token (the client revokes that one when it
-    /// sees it). The ConcurrencyStamp changes too: a refresh or login that loaded the user before this UPDATE then
-    /// fails its optimistic-concurrency save instead of writing the old session back.
+    /// Clears the current and the previous refresh token in a single UPDATE. With <paramref name="presentedToken"/> only
+    /// while that token is still the current or the previous one (a token two rotations old ends nothing). The
+    /// ConcurrencyStamp changes too, so a save elsewhere that loaded the user earlier can't write the old session back,
+    /// and a racing refresh's conditional rotation finds no current token.
     /// </summary>
-    private async Task<bool> RevokeAsync(Guid userId, string? expectedToken, CancellationToken cancellationToken)
+    private async Task<bool> RevokeAsync(Guid userId, string? presentedToken, CancellationToken cancellationToken)
     {
         var users = _context.Users.Where(u => u.Id == userId);
-        if (expectedToken is not null)
+        if (presentedToken is not null)
         {
-            users = users.Where(u => u.RefreshToken == expectedToken);
+            users = users.Where(u => u.RefreshToken == presentedToken || u.PreviousRefreshToken == presentedToken);
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var concurrencyStamp = Guid.NewGuid().ToString();
         var rows = await users.ExecuteUpdateAsync(setters => setters
             .SetProperty(u => u.RefreshToken, (string?)null)
             .SetProperty(u => u.RefreshTokenExpiryTime, now)
+            .SetProperty(u => u.PreviousRefreshToken, (string?)null)
+            .SetProperty(u => u.PreviousRefreshTokenValidUntilUtc, (DateTime?)null)
             .SetProperty(u => u.ConcurrencyStamp, concurrencyStamp), cancellationToken);
 
         return rows > 0;
