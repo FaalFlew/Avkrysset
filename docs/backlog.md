@@ -5,7 +5,7 @@ Roadmap phases: `docs/plans/pdf-export-and-organizations.md`.
 
 ## Next (before Phase 3)
 
-### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH (FIX IN PROGRESS: feature/auth-session-race)
+### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH — DONE (feature/auth-session-race, live-verified 2026-10-24)
 **Reported 2026-10-23.** Signed in but idle for hours (Azure has unloaded the API and the access token has expired). Creating a
 task hangs on the cold start; the user logs out, starts using the guest planner, and is suddenly switched back to the account.
 **Cause (confirmed in code):**
