@@ -71,6 +71,9 @@ calendar filtered by project (one calendar catches double-bookings across projec
 - Per-IP rate limits depend on the client IP reaching the app; on Azure configure forwarded headers so users don't share a bucket.
 - Access-token lifetime is hard-coded (15 min in `TokenService.cs`) and JWT `ClockSkew` is the 5-minute default, so expired tokens
   are accepted for up to 5 extra minutes — make the lifetime configurable and use a small ClockSkew (e.g. 30 s).
+- Refresh-token grace period: if the client gives up on a refresh (45 s timeout) that the cold server processes afterwards, the
+  rotated token is lost and the next refresh is refused → logout. Accept the immediately-previous refresh token for a short
+  window (e.g. 2 min) after rotation and re-issue the current pair, so a lost refresh response can't end the session.
 - Refresh still returns 200 when its save loses a race with logout (the revoke wins in the DB, but a 15-minute access token was
   already issued; the fixed client discards it) — check the save result and return 401.
 
