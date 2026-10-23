@@ -23,6 +23,26 @@ hangs on the cold start), logs out, starts using the guest planner — and is su
 3. Tests: logout with expired access token + matching refresh token → revoked (a later refresh with it fails); wrong/missing
    token → 204 and nothing changes; authenticated logout still works; health endpoint; refresh after revoke → 401.
 
+## Refresh grace period (added 2026-10-24 after the live review)
+Found in review: concurrent `/auth/refresh` calls with the same token all returned 200 although only one rotated token was
+stored (the failed save was ignored), and a refresh response lost to the client's 45 s timeout (cold server finishing late)
+left the client with a dead token → logged out, work lost.
+- Refresh confirms the looked-up token with the exact, constant-time `RefreshTokenComparison` (SQL Server matches
+  case-insensitively) → case-swapped tokens are 401 (backlog item 8, first bullet).
+- On rotation the replaced token is kept as `PreviousRefreshToken` until `PreviousRefreshTokenValidUntilUtc` =
+  now + `Auth:RefreshTokenGraceSeconds` (default 120; 0 turns it off). Presenting it within that window returns the CURRENT pair
+  (fresh access token + the stored current refresh token; no further rotation, window not extended). After the window, or a
+  token two rotations old → 401.
+- Rotation is a conditional UPDATE (only while the presented token is still current; the ConcurrencyStamp changes). Of
+  concurrent refreshes one rotates; the others reload, find their token is now the previous one and get the same current pair,
+  so tabs end with the SAME token. A refresh that loses to a logout finds nothing → 401.
+- Logout (bearer, or the current or previous refresh token, expired or not) clears current and previous; login and password
+  reset clear the previous token.
+- Migration `AddRefreshTokenGracePeriod`: two nullable `AspNetUsers` columns. Deploy script (idempotent, gitignored):
+  `deploy/migrate-database.sql`, Azure portal query editor variant without `GO`: `deploy/migrate-database.azure-portal.sql`.
+- Trade-off: for up to 2 minutes after a rotation, whoever holds the previous token can get the current pair (the usual
+  "reuse interval"; no reuse detection).
+
 ## Fix — frontend (Frontend/time-planner-app)
 1. **Session epoch** in `authStore`: a number incremented on login, logout and session clear. The request interceptor stamps each
    request with the current epoch.
