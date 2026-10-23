@@ -125,6 +125,12 @@ export function liveSessionRequestCount(): number {
   return liveRequests.size;
 }
 
+/** Test hook: forget every tracked request and the shared token refresh (nothing is aborted). */
+export function resetSessionGuard(): void {
+  for (const request of [...liveRequests]) request.finish();
+  sharedRefresh = null;
+}
+
 /**
  * Wait for `work` unless the request is aborted first: then reject at once with
  * SessionChangedError (session ended) or a CanceledError (the caller cancelled).

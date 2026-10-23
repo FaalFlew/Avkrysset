@@ -9,6 +9,7 @@ import { AxiosError, type AxiosAdapter, type AxiosResponse, type InternalAxiosRe
 const auth = {
   accessToken: "old-token" as string | null,
   refreshToken: "refresh" as string | null,
+  sessionEpoch: 0,
   handleTokenRefresh: vi.fn(async () => {
     auth.accessToken = "new-token";
   }),

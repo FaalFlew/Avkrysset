@@ -35,14 +35,15 @@ export interface SessionWarmupDeps {
   window: Listenable;
 }
 
-function defaultDeps(): SessionWarmupDeps {
+/** The real dependencies, except those overridden (browser globals are only read when needed). */
+function resolveDeps(overrides: Partial<SessionWarmupDeps>): SessionWarmupDeps {
   return {
-    ping: () => void wakeServer(),
-    refresh: () => void refreshSessionInBackground(),
-    now: () => now(),
-    visibility: () => document.visibilityState,
-    document,
-    window,
+    ping: overrides.ping ?? (() => void wakeServer()),
+    refresh: overrides.refresh ?? (() => void refreshSessionInBackground()),
+    now: overrides.now ?? (() => now()),
+    visibility: overrides.visibility ?? (() => document.visibilityState),
+    document: overrides.document ?? document,
+    window: overrides.window ?? window,
   };
 }
 
@@ -51,7 +52,7 @@ function defaultDeps(): SessionWarmupDeps {
  * Returns the function that removes the listeners.
  */
 export function installSessionWarmup(overrides: Partial<SessionWarmupDeps> = {}): () => void {
-  const deps: SessionWarmupDeps = { ...defaultDeps(), ...overrides };
+  const deps = resolveDeps(overrides);
   let awaySince: number | null = null;
 
   function warmUp(ping: boolean): void {
