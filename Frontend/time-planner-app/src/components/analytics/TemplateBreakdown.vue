@@ -301,6 +301,19 @@ tbody tr:hover {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+@media print {
+  tbody th,
+  tbody td {
+    height: 32px;
+  }
+  tbody tr {
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+}
+
 /* Narrow card: each row becomes name + hours on top, meter + share underneath. */
 @container (max-width: 639.98px) {
   .template-table thead {

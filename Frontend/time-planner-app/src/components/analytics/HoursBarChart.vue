@@ -201,7 +201,7 @@ const tableFooter = computed(() => ({
 
     <figure v-else class="chart-figure">
       <figcaption class="sr-only">{{ summary }}</figcaption>
-      <div class="chart-box">
+      <div class="chart-box" data-print-size="680x260">
         <Bar :data="chartData" :options="chartOptions" :aria-label="summary" />
       </div>
       <p v-if="sparse" class="chart-note">
@@ -273,6 +273,22 @@ const tableFooter = computed(() => ({
   }
   .chart-box--skeleton {
     height: 240px;
+  }
+}
+
+/* Paper: usePrintMode redraws the chart at 680×260 (2× pixels); it scales to the page width. */
+@media print {
+  .chart-box {
+    flex: none;
+    min-height: 0;
+  }
+  .chart-box :deep(canvas) {
+    position: static;
+    width: 100% !important;
+    height: auto !important;
+  }
+  .chart-figure {
+    break-inside: avoid;
   }
 }
 </style>

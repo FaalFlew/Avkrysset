@@ -18,6 +18,7 @@ import {
   endInstant,
   formatDate,
   formatDateRange,
+  formatDateTime,
   formatDayOfMonth,
   formatDuration,
   formatDurationMinutes,
@@ -497,6 +498,19 @@ describe("formatting", () => {
     expect(future).toMatch(/20/);
     expect(past).toMatch(/20/);
     expect(future).not.toBe(past);
+  });
+});
+
+describe(`formatDateTime (${TEST_ZONE})`, () => {
+  it("shows the local date and the local clock time of an instant", () => {
+    const instant = combineDateAndTime("2026-10-11", "14:05");
+    const text = formatDateTime(instant);
+    expect(text).toContain("2026");
+    expect(text).toContain(formatTime(instant));
+    expect(text).toContain(formatDayOfMonth("2026-10-11"));
+    // late evening UTC is already the next day east of UTC: the label follows the local date
+    const late = "2026-12-31T23:30:00.000Z";
+    expect(formatDateTime(late)).toContain(toDateKey(late).slice(0, 4));
   });
 });
 

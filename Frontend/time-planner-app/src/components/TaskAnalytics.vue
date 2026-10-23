@@ -1,11 +1,12 @@
 <!-- src/components/TaskAnalytics.vue — the /analytics page body (rendered inside the app shell). -->
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { CalendarRange, ChartColumn } from "lucide-vue-next";
 import { UiButton, UiEmptyState, UiErrorState, UiPageHeader } from "@/components/ui";
 import { useStats, type AnalyticsView } from "@/composables/useStats";
 import {
   analyticsBuckets,
+  analyticsRange,
   defaultAnalyticsPeriod,
   defaultDailyWeek,
   type AnalyticsSelection,
@@ -18,7 +19,11 @@ import KpiTiles from "./analytics/KpiTiles.vue";
 import HoursBarChart from "./analytics/HoursBarChart.vue";
 import CategoryDonut from "./analytics/CategoryDonut.vue";
 import TemplateBreakdown from "./analytics/TemplateBreakdown.vue";
+import ExportMenu from "./analytics/ExportMenu.vue";
+import PrintReportHeader from "./analytics/PrintReportHeader.vue";
 import { selectionShortLabel, selectionSummary } from "./analytics/format";
+import { installPrintSupport } from "@/composables/usePrintMode";
+import { usePaperPreference } from "@/lib/paper";
 
 const { availableYears, availableIsoYears, useFilteredStats } = useStats();
 const today = useToday();
@@ -119,6 +124,11 @@ const subtitle = computed(() =>
 /** Labels describe the data on screen (which lags the filters while refetching). */
 const shownSelection = computed(() => snapshot.value?.selection ?? currentSelection.value);
 const scopeLabel = computed(() => selectionShortLabel(shownSelection.value));
+/** Range of the data on screen, for the print header and the guest CSV. */
+const shownRangeLabel = computed(() =>
+  selectionSummary(shownSelection.value, analyticsBuckets(shownSelection.value).length)
+);
+const shownRange = computed(() => analyticsRange(shownSelection.value));
 
 type PageState = "error" | "loading" | "first-run" | "empty" | "ready";
 const state = computed<PageState>(() => {
@@ -130,6 +140,14 @@ const state = computed<PageState>(() => {
 });
 
 const retrying = computed(() => isLoading.value || isRefetching.value);
+
+// --- Print ("Print / Save as PDF" and the browser's own Print) ------------------------------
+const { paper } = usePaperPreference();
+let uninstallPrint: (() => void) | null = null;
+onMounted(() => {
+  uninstallPrint = installPrintSupport(() => paper.value);
+});
+onBeforeUnmount(() => uninstallPrint?.());
 
 const liveMessage = computed(() => {
   switch (state.value) {
@@ -148,8 +166,19 @@ const liveMessage = computed(() => {
 </script>
 
 <template>
-  <div class="analytics-page">
-    <UiPageHeader title="Analytics" :subtitle="subtitle">
+  <div class="analytics-page print-report">
+    <PrintReportHeader :range-label="shownRangeLabel" :range="shownRange" />
+
+    <UiPageHeader class="analytics-header" title="Analytics" :subtitle="subtitle" data-print-hide>
+      <template #actions>
+        <ExportMenu
+          :selection="currentSelection"
+          :snapshot="snapshot"
+          :page-state="state"
+          :refetching="isRefetching"
+          :range-label="shownRangeLabel"
+        />
+      </template>
       <AnalyticsFilters
         v-model:view="selectedView"
         v-model:year="selectedYear"
@@ -260,6 +289,17 @@ const liveMessage = computed(() => {
   padding: var(--space-6) var(--space-8) var(--space-10);
 }
 
+/*
+ * The Export block may shrink to the header row's width (its busy state wraps inside it instead of
+ * pushing the page sideways on phones) and stays right-aligned when it wraps under the title.
+ */
+.analytics-header :deep(.ui-page-header__actions) {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
 .analytics-body {
   min-width: 0;
 }
@@ -317,6 +357,21 @@ const liveMessage = computed(() => {
   .state-panel {
     min-height: 260px;
     padding: var(--space-10) var(--space-4);
+  }
+}
+
+/* Paper: the page margins come from @page (src/styles/print.css). */
+@media print {
+  .analytics-page {
+    max-width: none;
+    padding: 0;
+    gap: var(--space-4);
+  }
+  .analytics-content {
+    gap: var(--space-3);
+  }
+  .is-refetching {
+    opacity: 1;
   }
 }
 </style>

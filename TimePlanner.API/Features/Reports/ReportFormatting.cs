@@ -1,0 +1,127 @@
+using System.Globalization;
+using TimePlanner.API.Features.Queries.Tasks;
+
+namespace TimePlanner.API.Features.Reports;
+
+/// <summary>
+/// Text for reports. Labels are English; dates and numbers use the report culture (like the browser's Intl).
+/// </summary>
+public static class ReportFormatting
+{
+    /// <summary>Non-breaking space, so "12.5 h" never wraps between number and unit.</summary>
+    public const string Nbsp = "\u00A0";
+
+    /// <summary>Hours with at most one decimal and the culture's separators: 12.5 → "12.5 h" (en-US), "12,5 h" (nb-NO).</summary>
+    public static string Hours(double hours, CultureInfo culture) =>
+        Ltr(Math.Round(Finite(hours), 1, MidpointRounding.AwayFromZero).ToString("#,##0.#", culture)) + Nbsp + "h";
+
+    /// <summary>A share (0-1) as a whole percentage in the culture's style; tiny non-zero shares show "&lt;1%".</summary>
+    public static string Percent(double share, CultureInfo culture)
+    {
+        var value = Finite(share);
+        return Ltr(value is > 0 and < 0.005
+            ? "<" + 0.01.ToString("P0", culture)
+            : value.ToString("P0", culture));
+    }
+
+    public static string Count(int value, CultureInfo culture) => Ltr(value.ToString("N0", culture));
+
+    /// <summary>"October 2026", "January 2026 – December 2026", "Week 40 of 2026 (9/28/2026 – 10/4/2026)", "Weeks 38–41 of 2026 (…)".</summary>
+    public static string RangeLabel(ReportSelection selection, CultureInfo culture)
+    {
+        var (firstDay, lastDay) = selection.LocalDays();
+        if (selection.IsMonthly)
+        {
+            return selection.From == selection.To
+                ? Ltr(firstDay.ToString("Y", culture))
+                : $"{Ltr(firstDay.ToString("Y", culture))} – {Ltr(lastDay.ToString("Y", culture))}";
+        }
+
+        var dates = $"({Ltr(firstDay.ToString("d", culture))} – {Ltr(lastDay.ToString("d", culture))})";
+        return selection.From == selection.To
+            ? string.Create(CultureInfo.InvariantCulture, $"Week {selection.From} of {selection.Year} {dates}")
+            : string.Create(CultureInfo.InvariantCulture, $"Weeks {selection.From}–{selection.To} of {selection.Year} {dates}");
+    }
+
+    /// <summary>Full and axis labels of a bucket starting on the local day <paramref name="bucketStart"/>.</summary>
+    public static (string Label, string ShortLabel) PeriodLabels(string view, DateTime bucketStart, CultureInfo culture)
+    {
+        var format = culture.DateTimeFormat;
+        switch (view)
+        {
+            case TaskAnalyticsBreakdown.Monthly:
+                return (Ltr(bucketStart.ToString("Y", culture)), Ltr(format.GetAbbreviatedMonthName(bucketStart.Month)));
+            case TaskAnalyticsBreakdown.Weekly:
+                var week = ISOWeek.GetWeekOfYear(bucketStart);
+                return (string.Create(CultureInfo.InvariantCulture, $"Week {week}"),
+                        string.Create(CultureInfo.InvariantCulture, $"W{week}"));
+            default:
+                return (Ltr(bucketStart.ToString("D", culture)),
+                        $"{Ltr(format.GetAbbreviatedDayName(bucketStart.DayOfWeek))} {bucketStart.Day.ToString(culture)}");
+        }
+    }
+
+    /// <summary>
+    /// "Europe/Oslo (UTC+02:00)"; "Europe/Oslo (UTC+01:00/+02:00)" when the offset changes within the range; "UTC" for UTC.
+    /// </summary>
+    public static string ZoneLabel(string timeZoneId, TimeZoneInfo timeZone, DateTime startUtc, DateTime endUtc)
+    {
+        var offsets = OffsetsWithin(timeZone, startUtc, endUtc);
+        if (offsets.Count == 1 && offsets[0] == TimeSpan.Zero
+            && (timeZoneId == "UTC" || timeZoneId == "Etc/UTC"))
+        {
+            return "UTC";
+        }
+
+        return $"{timeZoneId} (UTC{string.Join("/", offsets.Select(Offset))})";
+    }
+
+    /// <summary>"+02:00", "-03:30", "+05:45".</summary>
+    public static string Offset(TimeSpan offset)
+    {
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        var abs = offset.Duration();
+        return string.Create(CultureInfo.InvariantCulture, $"{sign}{abs.Hours:D2}:{abs.Minutes:D2}");
+    }
+
+    /// <summary>Distinct UTC offsets in force during [startUtc, endUtc), ascending.</summary>
+    public static List<TimeSpan> OffsetsWithin(TimeZoneInfo timeZone, DateTime startUtc, DateTime endUtc)
+    {
+        var offsets = new SortedSet<TimeSpan>();
+        var start = DateTime.SpecifyKind(startUtc, DateTimeKind.Utc);
+        var end = DateTime.SpecifyKind(endUtc, DateTimeKind.Utc);
+
+        // Twice-daily samples catch every DST period (including month-long ones such as Ramadan time in Morocco).
+        for (var instant = start; instant < end; instant = instant.AddHours(12))
+        {
+            offsets.Add(timeZone.GetUtcOffset(instant));
+        }
+
+        offsets.Add(timeZone.GetUtcOffset(end > start ? end.AddTicks(-1) : start));
+        return offsets.ToList();
+    }
+
+    /// <summary>"2026-10-11 09:45 UTC (11.10.2026 11:45 Europe/Oslo)" — the footer's "Generated by … on {this}".</summary>
+    public static string GeneratedAt(DateTime generatedAtUtc, string timeZoneId, TimeZoneInfo timeZone, CultureInfo culture)
+    {
+        var utc = DateTime.SpecifyKind(generatedAtUtc, DateTimeKind.Utc);
+        var utcText = utc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " UTC";
+        return $"{utcText} ({LocalDateTime(utc, timeZone, culture)} {timeZoneId})";
+    }
+
+    /// <summary>The instant as a short local date and time in the culture, e.g. "10/11/2026 11:45 AM".</summary>
+    public static string LocalDateTime(DateTime utcInstant, TimeZoneInfo timeZone, CultureInfo culture) =>
+        Ltr(TaskAnalyticsBreakdown.ToLocal(utcInstant, timeZone).ToString("g", culture));
+
+    /// <summary>
+    /// Removes the bidi marks (LRM, RLM, ALM) that some cultures (e.g. ar-EG) put into formatted dates and numbers.
+    /// They exist for right-to-left paragraphs; inside the report's English (left-to-right) lines they reorder the
+    /// pieces of a date ("28/9/2026" would show as "2026/9/28").
+    /// </summary>
+    public static string Ltr(string text) =>
+        text.IndexOfAny(BidiMarks) < 0 ? text : string.Concat(text.Where(c => Array.IndexOf(BidiMarks, c) < 0));
+
+    private static readonly char[] BidiMarks = { '\u200E', '\u200F', '\u061C' };
+
+    private static double Finite(double value) => double.IsFinite(value) ? value : 0;
+}
