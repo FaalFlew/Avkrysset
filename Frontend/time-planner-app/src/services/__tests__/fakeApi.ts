@@ -35,6 +35,30 @@ export const expiredAccessToken = (sub = "user-1") => makeJwt({ sub, exp: nowSec
 /** An access token valid for 15 more minutes. */
 export const validAccessToken = (sub = "user-1", jti = "0") => makeJwt({ sub, jti, exp: nowSeconds() + 900 });
 
+/**
+ * In-process stand-in for navigator.locks (Web Locks API): exclusive, first come first served per
+ * name; a lock is released when its callback settles.
+ */
+export class FakeLocks {
+  /** Number of request() calls so far. */
+  requests = 0;
+  private tails = new Map<string, Promise<void>>();
+
+  request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+    this.requests += 1;
+    const previous = this.tails.get(name) ?? Promise.resolve();
+    const result = previous.then(() => callback());
+    this.tails.set(
+      name,
+      result.then(
+        () => undefined,
+        () => undefined
+      )
+    );
+    return result;
+  }
+}
+
 /** localStorage (in memory) + window, as the stores expect in a browser. Returns the storage map. */
 export function installBrowserGlobals(): Map<string, string> {
   const memory = new Map<string, string>();
