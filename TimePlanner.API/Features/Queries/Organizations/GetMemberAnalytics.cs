@@ -5,6 +5,7 @@ using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
+using TimePlanner.API.Exceptions;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
@@ -30,14 +31,12 @@ public class GetMemberAnalyticsQueryHandler : IRequestHandler<GetMemberAnalytics
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        // Authorization check
+        // Authorization: an active member, who must be an Admin/Owner OR viewing their own analytics.
+        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
         var isViewingSelf = currentUserId == request.MemberId;
-        var isAdminOrOwner = await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken);
-
-        // User must be an Admin/Owner OR viewing their own analytics.
-        if (!isAdminOrOwner && !isViewingSelf)
+        if (!AuthorizationExtensions.IsAdminOrOwnerRole(membership.Role) && !isViewingSelf)
         {
-            throw new UnauthorizedAccessException("You do not have permission to view this member's analytics.");
+            throw new ForbiddenException("You do not have permission to view this member's analytics.");
         }
 
         // Ensure the target member is actually part of the organization.
@@ -57,7 +56,7 @@ public class GetMemberAnalyticsQueryHandler : IRequestHandler<GetMemberAnalytics
             .AsNoTracking()
             .Where(t => t.OrganizationId == request.OrganizationId &&
                         t.Start >= request.StartDate &&
-                        t.Start < request.EndDate.AddDays(1) &&
+                        t.Start < request.EndDate &&
                         // Filter to tasks assigned to the target member
                         t.Assignments.Any(a => a.AssigneeId == request.MemberId));
 

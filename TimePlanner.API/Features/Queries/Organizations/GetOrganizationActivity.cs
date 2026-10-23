@@ -26,13 +26,8 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Any active member can view the activity log.
-        var isMember = await _context.OrganizationMemberships
-            .AnyAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId.Value, cancellationToken);
-
-        if (!isMember)
-        {
-            throw new UnauthorizedAccessException("You are not a member of this organization.");
-        }
+        // Members who left or were removed no longer see the feed.
+        await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
 
         var activityLogs = new List<ActivityLogDto>();
 
@@ -43,7 +38,7 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
             .Include(t => t.User) // User who created it
             .OrderByDescending(t => t.UpdatedOnUtc ?? t.CreatedOnUtc)
             .Take(request.Limit)
-            .Select(t => new { t.Title, t.CreatedOnUtc, t.UpdatedOnUtc, ActorEmail = t.User.Email, ActorId = t.UserId })
+            .Select(t => new { t.Title, t.CreatedOnUtc, t.UpdatedOnUtc, ActorEmail = t.User.Email, ActorName = t.User.DisplayName ?? t.User.Email, ActorId = t.UserId })
             .ToListAsync(cancellationToken);
 
         foreach (var activity in taskActivities)
@@ -55,6 +50,7 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
                     Timestamp = activity.UpdatedOnUtc.Value,
                     ActorUserId = activity.ActorId,
                     ActorUserEmail = activity.ActorEmail!,
+                    ActorDisplayName = activity.ActorName!,
                     ActionType = "Updated",
                     EntityType = "Task",
                     Description = $"Task '{activity.Title}' was updated."
@@ -65,6 +61,7 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
                 Timestamp = activity.CreatedOnUtc,
                 ActorUserId = activity.ActorId,
                 ActorUserEmail = activity.ActorEmail!,
+                ActorDisplayName = activity.ActorName!,
                 ActionType = "Created",
                 EntityType = "Task",
                 Description = $"Task '{activity.Title}' was created."
@@ -78,7 +75,7 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
             .Include(m => m.User) // User who is the subject of the action
             .OrderByDescending(m => m.CreatedOnUtc)
             .Take(request.Limit)
-            .Select(m => new { m.CreatedOnUtc, m.Status, SubjectEmail = m.User.Email, SubjectId = m.UserId })
+            .Select(m => new { m.CreatedOnUtc, m.Status, SubjectEmail = m.User.Email, SubjectName = m.User.DisplayName ?? m.User.Email, SubjectId = m.UserId })
             .ToListAsync(cancellationToken);
 
         foreach (var activity in membershipActivities)
@@ -88,9 +85,10 @@ public class GetOrganizationActivityQueryHandler : IRequestHandler<GetOrganizati
                 Timestamp = activity.CreatedOnUtc,
                 ActorUserId = activity.SubjectId,
                 ActorUserEmail = activity.SubjectEmail!,
+                ActorDisplayName = activity.SubjectName!,
                 ActionType = "Joined",
                 EntityType = "Organization",
-                Description = $"{activity.SubjectEmail} joined the organization."
+                Description = $"{activity.SubjectName} joined the organization."
             });
             // Note: We don't have a good way to show who "Removed" a member without changing the model. This is a good V2 improvement.
         }

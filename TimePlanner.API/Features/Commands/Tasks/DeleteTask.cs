@@ -23,8 +23,9 @@ public class DeleteTaskCommandHandler : IRequestHandler<DeleteTaskCommand>
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
+        // Only personal tasks: organization tasks are deleted through the organization endpoints.
         var task = await _context.Tasks
-            .FirstOrDefaultAsync(t => t.Id == request.Id && t.UserId == userId, cancellationToken);
+            .FirstOrDefaultAsync(t => t.Id == request.Id && t.UserId == userId && t.OrganizationId == null, cancellationToken);
 
         if (task != null)
         {

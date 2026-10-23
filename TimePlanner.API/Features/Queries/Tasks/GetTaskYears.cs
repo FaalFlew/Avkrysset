@@ -1,27 +1,28 @@
-// NEW FILE: TimePlanner.API/Features/Queries/Tasks/GetTaskYears.cs
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.Services;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Tasks;
 
-// The query is simple and takes no parameters. It returns a list of integers.
-public record GetTaskYearsQuery : IRequest<List<int>>;
+// Returns the calendar years (in the caller's time zone, null => UTC) that contain at least one task.
+public record GetTaskYearsQuery(string? TimeZoneId = null) : IRequest<List<int>>;
 
 public class GetTaskYearsQueryHandler : IRequestHandler<GetTaskYearsQuery, List<int>>
 {
     private readonly ApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ILogger<GetTaskYearsQueryHandler> _logger;
 
-    public GetTaskYearsQueryHandler(ApplicationDbContext context, ICurrentUserService currentUserService)
+    public GetTaskYearsQueryHandler(
+        ApplicationDbContext context,
+        ICurrentUserService currentUserService,
+        ILogger<GetTaskYearsQueryHandler> logger)
     {
         _context = context;
         _currentUserService = currentUserService;
+        _logger = logger;
     }
 
     public async Task<List<int>> Handle(GetTaskYearsQuery request, CancellationToken cancellationToken)
@@ -29,23 +30,35 @@ public class GetTaskYearsQueryHandler : IRequestHandler<GetTaskYearsQuery, List<
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
-        // This is a very efficient database query.
-        // It selects only the 'Start' column, extracts the Year part in the database,
-        // gets the distinct years, and orders them descending.
-        var years = await _context.Tasks
+        var timeZone = TimeZoneResolver.ResolveOrUtc(request.TimeZoneId, _logger);
+
+        // The year must be taken in the caller's zone (a task at 2025-12-31T23:30Z is in 2026 in Oslo),
+        // so only the start instants are read and converted here.
+        var starts = await _context.Tasks
             .AsNoTracking()
-            .Where(t => t.UserId == userId)
-            .Select(t => t.Start.Year)
-            .Distinct()
-            .OrderByDescending(year => year)
+            .Where(PlannerScope.ForUser(_context, userId.Value))
+            .Select(t => t.Start)
             .ToListAsync(cancellationToken);
 
+        var years = TaskYears.LocalYears(starts, timeZone);
+
         // If the user has no tasks at all, ensure the current year is still an option.
-        if (!years.Any())
+        if (years.Count == 0)
         {
-            years.Add(DateTime.UtcNow.Year);
+            years.Add(TaskAnalyticsBreakdown.ToLocal(DateTime.UtcNow, timeZone).Year);
         }
 
         return years;
     }
+}
+
+public static class TaskYears
+{
+    /// <summary>Distinct calendar years of the UTC instants in <paramref name="timeZone"/>, newest first.</summary>
+    public static List<int> LocalYears(IEnumerable<DateTime> utcInstants, TimeZoneInfo timeZone) =>
+        utcInstants
+            .Select(instant => TaskAnalyticsBreakdown.ToLocal(instant, timeZone).Year)
+            .Distinct()
+            .OrderByDescending(year => year)
+            .ToList();
 }

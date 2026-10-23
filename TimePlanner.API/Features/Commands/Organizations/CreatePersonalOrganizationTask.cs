@@ -4,9 +4,12 @@ using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
 using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Commands.Tasks;
+using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Commands.Organizations;
 
@@ -21,11 +24,13 @@ public class CreatePersonalOrganizationTaskCommandValidator : AbstractValidator<
 {
     public CreatePersonalOrganizationTaskCommandValidator()
     {
-        RuleFor(x => x.OrganizationId).NotEmpty();
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Start).NotEmpty();
-        RuleFor(x => x.Duration).GreaterThan(0);
-        RuleFor(x => x.CategoryId).NotEmpty();
+        RuleFor(x => x.OrganizationId).NotEmpty().WithMessage("Organization is required.");
+        RuleFor(x => x.Title).NotEmpty().WithMessage(TaskRules.TitleRequired); // no length limit: Tasks.Title is nvarchar(max)
+        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
+        RuleFor(x => x.Duration)
+            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
+            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
+        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
     }
 }
 
@@ -53,14 +58,7 @@ public class CreatePersonalOrganizationTaskCommandHandler : IRequestHandler<Crea
         // --- Authorization & Validation ---
 
         // 1. User must be an active member of the organization.
-        var membership = await _context.OrganizationMemberships
-            .Include(m => m.User) // Include user to get the email later
-            .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId, cancellationToken);
-
-        if (membership == null || membership.Status != MembershipStatus.Active)
-        {
-            throw new UnauthorizedAccessException("You are not an active member of this organization.");
-        }
+        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
 
         // 2. The category must exist and belong to the current user.
         var category = await _context.Categories
@@ -71,11 +69,18 @@ public class CreatePersonalOrganizationTaskCommandHandler : IRequestHandler<Crea
             throw new ValidationException($"Category with ID {request.CategoryId} not found for your user.");
         }
 
-        // TODO: Overlap check for the current user's schedule. This can be added later.
+        // Organization tasks are not checked against personal calendars (decision Q3); the planner blocks
+        // personal tasks that overlap assigned organization work instead.
 
-        var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        try
+        // The transaction runs inside the context's retrying execution strategy (EnableRetryOnFailure rejects a
+        // user-initiated transaction outside of it). Each attempt starts with an empty change tracker;
+        // disposing an uncommitted transaction rolls it back.
+        var strategy = _context.Database.CreateExecutionStrategy();
+        var task = await strategy.ExecuteAsync(async () =>
         {
+            _context.ChangeTracker.Clear();
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
             // 1. Create the TaskItem
             var task = new TaskItem
             {
@@ -99,36 +104,16 @@ public class CreatePersonalOrganizationTaskCommandHandler : IRequestHandler<Crea
             await _context.SaveChangesAsync(cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
+            return task;
+        });
 
-            // 3. Map to DTO
-            var assigneeDto = new TaskAssigneeDto
-            {
-                UserId = currentUserId.Value,
-                UserEmail = membership.User.Email! // We loaded the user in the membership check
-            };
+        // 3. Map to DTO (one query)
+        var taskDto = await TaskProjections.LoadAsync(_context, task.Id, cancellationToken);
 
+        // Only after the commit, and only once even if the transaction was retried.
+        await _notificationService.TaskCreated(request.OrganizationId, taskDto);
 
-            var taskDto = new TaskItemDto
-            {
-                Id = task.Id,
-                Title = task.Title,
-                Start = task.Start,
-                Duration = task.Duration,
-                CategoryId = task.CategoryId,
-                CategoryName = category.Name,
-                CategoryColor = category.Color,
-                OrganizationId = task.OrganizationId,
-                Assignees = new List<TaskAssigneeDto> { assigneeDto }
-            };
-
-            await _notificationService.TaskCreated(request.OrganizationId, taskDto);
-
-            return taskDto;
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+        return taskDto.WithCapabilities(
+            TaskCapabilities.For(task.OrganizationId, task.UserId, currentUserId.Value, membership.Role));
     }
 }

@@ -4,6 +4,7 @@ using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
@@ -26,16 +27,7 @@ public class GetOrganizationIssuePanelsQueryHandler : IRequestHandler<GetOrganiz
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Any active member can view the issue panels.
-        var isMember = await _context.OrganizationMemberships
-            .AnyAsync(m => m.OrganizationId == request.OrganizationId &&
-                           m.UserId == currentUserId &&
-                           m.Status == MembershipStatus.Active,
-                      cancellationToken);
-
-        if (!isMember)
-        {
-            throw new UnauthorizedAccessException("You are not an active member of this organization.");
-        }
+        await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
 
         var panels = await _context.IssuePanels
             .AsNoTracking()

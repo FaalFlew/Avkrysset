@@ -16,7 +16,8 @@ _(**Note**: You should replace the placeholder link above with a real screenshot
   - **Move Tasks**: Drag tasks to reschedule them to a new time or day.
   - **Resize Tasks**: Drag the top or bottom border of a task to intuitively adjust its start time or duration.
   - **15-Minute Snapping**: All drag and resize operations snap to 15-minute intervals for precision.
-- **Mobile & Touch Support**: The entire drag-and-drop interface is fully supported on mobile and touch devices.
+- **Keyboard**: Focus a task and use ↑/↓ to move it 15 minutes, Shift+↑/↓ to change its length, ←/→ to move it a day, Enter to edit and Delete to remove it (with undo). Press `?` in the app for all shortcuts.
+- **Phones & Touch**: On phones the planner shows one day at a time with a week strip. Tap a time to add a task; press and hold a task to drag it (resizing on touch is done in the task editor).
 
 ### 2. Task & Category Management
 

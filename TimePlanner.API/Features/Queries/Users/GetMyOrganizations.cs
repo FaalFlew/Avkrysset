@@ -36,6 +36,7 @@ public class GetMyOrganizationsQueryHandler : IRequestHandler<GetMyOrganizations
                 Id = m.Organization.Id,
                 Name = m.Organization.Name,
                 OwnerId = m.Organization.OwnerId,
+                TimeZoneId = m.Organization.TimeZoneId,
                 MemberJoinCode = m.Organization.MemberJoinCode,
                 MemberJoinCodeExpiryUtc = m.Organization.MemberJoinCodeExpiryUtc,
                 AdminJoinCode = m.Organization.AdminJoinCode,

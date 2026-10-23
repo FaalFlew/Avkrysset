@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useAuthStore } from "@/stores/authStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { useRouter, useRoute, RouterLink } from "vue-router";
 import { useUIStore } from "@/stores/uiStore";
+import { ArrowRight, CircleAlert } from "lucide-vue-next";
+import AuthLayout from "@/components/auth/AuthLayout.vue";
+import PasswordField from "@/components/auth/PasswordField.vue";
+import { loginErrorMessage } from "@/components/auth/authErrors";
+import UiButton from "@/components/ui/UiButton.vue";
+import UiInput from "@/components/ui/UiInput.vue";
 
-const uiStore = useUIStore(); // Get a reference to uiStore
+const SLOW_HINT_DELAY_MS = 3000;
+
+const uiStore = useUIStore();
 
 const email = ref("");
 const password = ref("");
@@ -14,94 +22,107 @@ const taskStore = useTaskStore();
 const router = useRouter();
 const route = useRoute(); // To read query params
 
+// Inline feedback (the form never relies on toasts alone).
+const formError = ref("");
+const showSlowHint = ref(false);
+const submitting = ref(false);
+let slowHintTimer: number | undefined;
+
+const isBusy = computed(() => submitting.value || authStore.authStatus === "loading");
+
+function startSlowHintTimer(): void {
+  stopSlowHintTimer();
+  slowHintTimer = window.setTimeout(() => {
+    showSlowHint.value = true;
+  }, SLOW_HINT_DELAY_MS);
+}
+
+function stopSlowHintTimer(): void {
+  if (slowHintTimer !== undefined) window.clearTimeout(slowHintTimer);
+  slowHintTimer = undefined;
+  showSlowHint.value = false;
+}
+
 // Check for query params on component mount
 onMounted(() => {
   if (route.query.confirmed === "true") {
-    uiStore.showToast(
-      "Email confirmed successfully! You can now log in.",
-      "success"
-    );
+    uiStore.showToast("Email confirmed successfully! You can now log in.", "success");
   }
-  // ADDED: Check for the new query parameter
   if (route.query.sessionExpired === "true") {
     uiStore.showToast("Your session has expired. Please log in again.", "info");
   }
 });
 
-async function handleLogin() {
-  const success = await authStore.login({
-    email: email.value,
-    password: password.value,
-  });
+onBeforeUnmount(stopSlowHintTimer);
 
-  if (success) {
-    // After successful login, initialize the task data from the API
-    await taskStore.initializeData();
-    // Then navigate to the main planner view
-    router.push("/");
+async function handleLogin() {
+  if (isBusy.value) return;
+  formError.value = "";
+  submitting.value = true;
+  startSlowHintTimer();
+  try {
+    const success = await authStore.login({
+      email: email.value,
+      password: password.value,
+    });
+
+    if (success) {
+      // After successful login, initialize the task data from the API
+      await taskStore.initializeData();
+      // Then navigate to the main planner view
+      router.push("/");
+    } else {
+      formError.value = loginErrorMessage(authStore);
+    }
+  } finally {
+    submitting.value = false;
+    stopSlowHintTimer();
   }
 }
 </script>
 
 <template>
-  <div class="auth-container">
-    <h2>Login</h2>
-    <form @submit.prevent="handleLogin" class="auth-form">
-      <div class="form-group">
-        <label for="email">Email</label>
-        <input type="email" id="email" v-model="email" required />
-      </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" v-model="password" required />
-      </div>
-      <div class="form-extra-links">
-        <RouterLink to="/forgot-password">Forgot Password?</RouterLink>
-      </div>
-      <button
-        type="submit"
-        class="btn-primary"
-        :disabled="authStore.authStatus === 'loading'"
-      >
-        {{ authStore.authStatus === "loading" ? "Logging in..." : "Login" }}
-      </button>
+  <AuthLayout title="Welcome back" subtitle="Log in to sync your plans across devices.">
+    <form class="auth-form" @submit.prevent="handleLogin">
+      <p v-if="formError" class="auth-alert" role="alert">
+        <CircleAlert :size="16" />
+        <span>{{ formError }}</span>
+      </p>
+
+      <UiInput
+        v-model="email"
+        label="Email"
+        type="email"
+        size="lg"
+        name="email"
+        autocomplete="email"
+        inputmode="email"
+        autocapitalize="off"
+        spellcheck="false"
+        required
+      />
+
+      <PasswordField v-model="password" name="password" autocomplete="current-password" required>
+        <template #label-end>
+          <RouterLink to="/forgot-password" class="auth-link-sm">Forgot password?</RouterLink>
+        </template>
+      </PasswordField>
+
+      <UiButton type="submit" variant="primary" size="lg" block class="auth-submit" :loading="isBusy">
+        {{ isBusy ? "Logging in…" : "Log in" }}
+      </UiButton>
     </form>
-    <p>
-      Don't have an account?
-      <RouterLink to="/register">Register here</RouterLink>
+    <p class="auth-hint" aria-live="polite">
+      <template v-if="showSlowHint">The server may be waking up — this can take up to 20 seconds.</template>
     </p>
-  </div>
+
+    <template #footer>
+      <p>New here? <RouterLink to="/register">Create an account</RouterLink></p>
+      <div class="auth-divider" aria-hidden="true">or</div>
+      <UiButton to="/" variant="ghost">
+        Continue as guest
+        <template #trailing><ArrowRight :size="16" /></template>
+      </UiButton>
+    </template>
+  </AuthLayout>
 </template>
-
-<style scoped>
-/* Simple styles for the auth forms */
-.auth-container {
-  max-width: 400px;
-  margin: 50px auto;
-  padding: 2rem;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  text-align: center;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.auth-form button {
-  margin-top: 1rem;
-}
-
-p {
-  margin-top: 1.5rem;
-}
-
-.form-extra-links {
-  text-align: right;
-  font-size: 0.9rem;
-  margin-bottom: 1rem;
-}
-</style>
