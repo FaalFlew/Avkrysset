@@ -59,6 +59,9 @@ public sealed class ApiFixture : IAsyncLifetime
     /// <summary>Counts SQL commands sent by the API while a window is open.</summary>
     public SqlCommandCounter SqlCommands { get; } = new();
 
+    /// <summary>The API's TimeProvider: real time unless a test shifts it.</summary>
+    public TestClock Clock { get; } = new();
+
     public async Task InitializeAsync()
     {
         EnsureLocalDb(ConnectionString);
@@ -69,7 +72,7 @@ public sealed class ApiFixture : IAsyncLifetime
         SetEnvironment("JwtSettings__Issuer", "https://timeplanner.tests/");
         SetEnvironment("JwtSettings__Audience", "https://timeplanner.tests/");
 
-        Factory = new TestApiFactory(Notifications, Faults, SqlCommands);
+        Factory = new TestApiFactory(Notifications, Faults, SqlCommands, Clock);
 
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -167,7 +170,8 @@ public sealed class ApiFixture : IAsyncLifetime
     private sealed class TestApiFactory(
         RecordingNotificationService notifications,
         FaultInjectionInterceptor faults,
-        SqlCommandCounter sqlCommands) : WebApplicationFactory<Program>
+        SqlCommandCounter sqlCommands,
+        TestClock clock) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -183,6 +187,9 @@ public sealed class ApiFixture : IAsyncLifetime
                 services.ConfigureDbContext<ApplicationDbContext>(options => options.AddInterceptors(faults, sqlCommands));
 
                 services.AddSingleton<IStartupFilter, TestClientIp.StartupFilter>();
+
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
             });
         }
     }

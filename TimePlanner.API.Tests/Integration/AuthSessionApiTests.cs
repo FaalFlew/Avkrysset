@@ -18,7 +18,8 @@ namespace TimePlanner.API.Tests.Integration;
 
 /// <summary>
 /// The cold-start logout race (docs/plans/auth-session-race.md): POST /api/auth/logout works without a valid access
-/// token, GET /api/health, and the sign-out rate limit, end to end on LocalDB.
+/// token, the refresh grace period and race-safe rotation, GET /api/health, and the sign-out rate limit, end to end
+/// on LocalDB.
 /// </summary>
 [Collection(ApiCollection.Name)]
 public sealed class AuthSessionApiTests
@@ -34,7 +35,9 @@ public sealed class AuthSessionApiTests
 
     private sealed record Session(TestUser User, string AccessToken, string RefreshToken);
 
-    private sealed record Stored(string? RefreshToken, DateTime ExpiryUtc, string? ConcurrencyStamp);
+    private sealed record Stored(
+        string? RefreshToken, DateTime ExpiryUtc, string? PreviousRefreshToken, DateTime? PreviousValidUntilUtc,
+        string? ConcurrencyStamp);
 
     /// <summary>A confirmed user signed in through /api/auth/login; the tokens are the current ones.</summary>
     private async Task<Session> SignInAsync()
@@ -105,7 +108,8 @@ public sealed class AuthSessionApiTests
         using var scope = _fixture.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var user = await db.Users.AsNoTracking().SingleAsync(u => u.Id == userId);
-        return new Stored(user.RefreshToken, user.RefreshTokenExpiryTime, user.ConcurrencyStamp);
+        return new Stored(user.RefreshToken, user.RefreshTokenExpiryTime, user.PreviousRefreshToken,
+            user.PreviousRefreshTokenValidUntilUtc, user.ConcurrencyStamp);
     }
 
     /// <summary>An access token signed like the API's own, expiring <paramref name="expiresIn"/> from now.</summary>
@@ -135,16 +139,25 @@ public sealed class AuthSessionApiTests
     /// <summary>Expired an hour ago: well past the JWT handler's 5-minute clock skew.</summary>
     private string ExpiredAccessToken(TestUser user) => AccessToken(user.Id, user.Email, TimeSpan.FromHours(-1));
 
-    private async Task AssertRevokedAsync(Session session, Stored before)
+    /// <summary>Current and previous token are gone, and neither the session's token nor any of <paramref name="alsoDead"/> refreshes.</summary>
+    private async Task AssertRevokedAsync(Session session, Stored before, params string[] alsoDead)
     {
         var after = await StoredAsync(session.User.Id);
         Assert.Null(after.RefreshToken);
-        Assert.InRange(after.ExpiryUtc, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow.AddSeconds(5));
+        Assert.Null(after.PreviousRefreshToken);
+        Assert.Null(after.PreviousValidUntilUtc);
+        // Expired "now" (by the API's clock, which a test may have shifted), not in 7 days.
+        Assert.InRange(after.ExpiryUtc, DateTime.UtcNow.AddMinutes(-5), DateTime.UtcNow.AddMinutes(15));
         Assert.NotEqual(before.ConcurrencyStamp, after.ConcurrencyStamp);
 
-        var refresh = await RefreshAsync(session.RefreshToken);
-        Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
+        foreach (var token in alsoDead.Prepend(session.RefreshToken))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(token)).StatusCode);
+        }
     }
+
+    private async Task<string> RotateAsync(string refreshToken) =>
+        (await ReadTokensAsync(await RefreshAsync(refreshToken))).Refresh;
 
     [Fact]
     public async Task The_expired_test_access_token_is_rejected_only_for_being_expired()
@@ -284,19 +297,41 @@ public sealed class AuthSessionApiTests
         Assert.Equal(before, await StoredAsync(session.User.Id));
     }
 
-    [Fact]
-    public async Task A_rotated_refresh_token_does_not_end_the_newer_session()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Logout_with_the_previous_refresh_token_ends_the_session(bool afterTheGracePeriod)
     {
+        // The client never received the rotation's response, so it signs out with the token it still has.
         var session = await SignInAsync();
-        var (_, rotated) = await ReadTokensAsync(await RefreshAsync(session.RefreshToken));
+        var current = await RotateAsync(session.RefreshToken);
         var before = await StoredAsync(session.User.Id);
-        Assert.Equal(rotated, before.RefreshToken);
+        Assert.Equal((current, session.RefreshToken), (before.RefreshToken, before.PreviousRefreshToken));
 
-        var response = await LogoutAsync(Client(), Body(session.RefreshToken));
+        HttpResponseMessage response;
+        using (_fixture.Clock.Shift(afterTheGracePeriod ? TimeSpan.FromMinutes(10) : TimeSpan.Zero))
+        {
+            response = await LogoutAsync(Client(), Body(session.RefreshToken));
+        }
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        await AssertRevokedAsync(session, before, current);
+    }
+
+    [Fact]
+    public async Task A_refresh_token_two_rotations_old_is_401_and_ends_nothing()
+    {
+        var session = await SignInAsync();
+        var second = await RotateAsync(session.RefreshToken);
+        var third = await RotateAsync(second);
+        var before = await StoredAsync(session.User.Id);
+        Assert.Equal((third, second), (before.RefreshToken, before.PreviousRefreshToken));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await LogoutAsync(Client(), Body(session.RefreshToken))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(session.RefreshToken)).StatusCode);
+
         Assert.Equal(before, await StoredAsync(session.User.Id));
-        Assert.Equal(HttpStatusCode.OK, (await RefreshAsync(rotated)).StatusCode);
+        Assert.Equal(third, await RotateAsync(second)); // the previous token still gets the current pair
     }
 
     [Fact]
@@ -321,19 +356,19 @@ public sealed class AuthSessionApiTests
     }
 
     [Fact]
-    public async Task A_refresh_that_read_the_user_before_the_logout_cannot_write_the_session_back()
+    public async Task A_save_that_read_the_user_before_the_logout_cannot_write_the_session_back()
     {
         var session = await SignInAsync();
         using var scope = _fixture.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>();
 
-        // What a racing /auth/refresh does: load the user by token...
+        // What a racing UserManager save (e.g. a login) does: load the user...
         var stale = await userManager.Users.SingleAsync(u => u.RefreshToken == session.RefreshToken);
 
         // ...the logout wins the race...
         Assert.Equal(HttpStatusCode.NoContent, (await LogoutAsync(Client(), Body(session.RefreshToken))).StatusCode);
 
-        // ...and the refresh's save of the rotated token is refused instead of reviving the session.
+        // ...and the stale save of a new token is refused instead of reviving the session.
         stale.RefreshToken = RandomToken();
         stale.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
         var result = await userManager.UpdateAsync(stale);
@@ -350,15 +385,191 @@ public sealed class AuthSessionApiTests
 
         var (access, rotated) = await ReadTokensAsync(await RefreshAsync(session.RefreshToken));
         Assert.NotEqual(session.RefreshToken, rotated);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(session.RefreshToken)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await Client(access).GetAsync("/api/users/me")).StatusCode);
 
         Assert.Equal(HttpStatusCode.NoContent, (await LogoutAsync(Client(access), Body(rotated))).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(rotated)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(session.RefreshToken)).StatusCode);
 
-        // Signing in again starts a new, working session.
+        // Signing in again starts a new, working session, and the health ping is unaffected.
         var (_, again) = await LoginAsync(session.User.Email);
-        Assert.Equal(HttpStatusCode.OK, (await RefreshAsync(again)).StatusCode);
+        Assert.NotEqual(again, await RotateAsync(again));
+        Assert.Equal(HttpStatusCode.NoContent, (await Client().GetAsync("/api/health")).StatusCode);
+    }
+
+    // --- Refresh: exact match, grace period for the previous token, race-safe rotation ---------------------------
+
+    [Fact]
+    public async Task Ten_parallel_refreshes_with_the_same_token_all_get_the_same_new_token()
+    {
+        // Two tabs, or a retry after a client timeout, refreshing with the same token at once.
+        var session = await SignInAsync();
+        var clients = Enumerable.Range(0, 10).Select(_ => Client()).ToArray();
+
+        var responses = await Task.WhenAll(clients.Select(client =>
+            client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = session.RefreshToken })));
+
+        var pairs = new List<(string Access, string Refresh)>();
+        foreach (var response in responses)
+        {
+            pairs.Add(await ReadTokensAsync(response)); // every one is 200
+        }
+
+        var current = Assert.Single(pairs.Select(p => p.Refresh).Distinct());
+        Assert.NotEqual(session.RefreshToken, current);
+        var stored = await StoredAsync(session.User.Id);
+        Assert.Equal((current, session.RefreshToken), (stored.RefreshToken, stored.PreviousRefreshToken));
+
+        // Every access token works, and the shared refresh token keeps rotating as usual.
+        foreach (var (access, _) in pairs)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await Client(access).GetAsync("/api/users/me")).StatusCode);
+        }
+
+        Assert.NotEqual(current, await RotateAsync(current));
+    }
+
+    [Fact]
+    public async Task The_previous_token_within_the_grace_period_gets_the_current_pair_without_rotating()
+    {
+        var session = await SignInAsync();
+        var current = await RotateAsync(session.RefreshToken);
+        var before = await StoredAsync(session.User.Id);
+
+        // The window (Auth:RefreshTokenGraceSeconds, default 120) starts at the rotation.
+        Assert.InRange(before.PreviousValidUntilUtc!.Value, DateTime.UtcNow.AddSeconds(100), DateTime.UtcNow.AddSeconds(121));
+
+        for (var i = 0; i < 2; i++)
+        {
+            var (access, refresh) = await ReadTokensAsync(await RefreshAsync(session.RefreshToken));
+            Assert.Equal(current, refresh);
+            Assert.Equal(HttpStatusCode.OK, (await Client(access).GetAsync("/api/users/me")).StatusCode);
+        }
+
+        // Nothing was rotated, and the window was not extended.
+        Assert.Equal(before, await StoredAsync(session.User.Id));
+    }
+
+    [Fact]
+    public async Task A_lost_refresh_response_does_not_end_the_session()
+    {
+        // The cold server rotates the token after the client stopped waiting (45 s timeout). The client still holds
+        // the old token and tries again 30 seconds later.
+        var session = await SignInAsync();
+        var current = await RotateAsync(session.RefreshToken); // the response the client never received
+
+        using (_fixture.Clock.Shift(TimeSpan.FromSeconds(30)))
+        {
+            var (access, refresh) = await ReadTokensAsync(await RefreshAsync(session.RefreshToken));
+            Assert.Equal(current, refresh);
+            Assert.Equal(HttpStatusCode.OK, (await Client(access).GetAsync("/api/users/me")).StatusCode);
+
+            // ...and carries on with the current token.
+            Assert.NotEqual(current, await RotateAsync(current));
+        }
+    }
+
+    [Fact]
+    public async Task After_the_grace_period_the_previous_token_is_401()
+    {
+        var session = await SignInAsync();
+        var current = await RotateAsync(session.RefreshToken);
+        var before = await StoredAsync(session.User.Id);
+
+        using (_fixture.Clock.Shift(TimeSpan.FromSeconds(121)))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(session.RefreshToken)).StatusCode);
+            Assert.Equal(before, await StoredAsync(session.User.Id));
+
+            // The current token is not affected.
+            Assert.NotEqual(current, await RotateAsync(current));
+        }
+    }
+
+    [Fact]
+    public async Task Logout_revokes_the_current_and_the_previous_token()
+    {
+        // Signed in (bearer only) right after a rotation: neither the current nor the grace-period token refreshes.
+        var signedIn = await SignInAsync();
+        var signedInCurrent = await RotateAsync(signedIn.RefreshToken);
+        var signedInBefore = await StoredAsync(signedIn.User.Id);
+        Assert.Equal(HttpStatusCode.NoContent, (await LogoutAsync(Client(signedIn.AccessToken), null)).StatusCode);
+        await AssertRevokedAsync(signedIn, signedInBefore, signedInCurrent);
+
+        // Anonymous, with the current token.
+        var anonymous = await SignInAsync();
+        var anonymousCurrent = await RotateAsync(anonymous.RefreshToken);
+        var anonymousBefore = await StoredAsync(anonymous.User.Id);
+        Assert.Equal(HttpStatusCode.NoContent, (await LogoutAsync(Client(), Body(anonymousCurrent))).StatusCode);
+        await AssertRevokedAsync(anonymous, anonymousBefore, anonymousCurrent);
+    }
+
+    [Fact]
+    public async Task A_case_swapped_refresh_token_is_401()
+    {
+        var session = await SignInAsync();
+        var current = await RotateAsync(session.RefreshToken);
+        var before = await StoredAsync(session.User.Id);
+
+        // Both the current and the grace-period token, with their letters' case swapped.
+        foreach (var token in new[] { current, session.RefreshToken })
+        {
+            var otherCase = SwapCase(token);
+            Assert.NotEqual(token, otherCase);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(otherCase)).StatusCode);
+        }
+
+        Assert.Equal(before, await StoredAsync(session.User.Id));
+        Assert.NotEqual(current, await RotateAsync(current));
+    }
+
+    [Fact]
+    public async Task Refreshes_racing_a_logout_never_leave_a_working_token()
+    {
+        var session = await SignInAsync();
+
+        var refreshes = Enumerable.Range(0, 8).Select(_ => RefreshAsync(session.RefreshToken)).ToList();
+        var logout = LogoutAsync(Client(), Body(session.RefreshToken));
+        await Task.WhenAll(refreshes.Append(logout));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await logout).StatusCode);
+        var issued = new List<string>();
+        foreach (var refresh in refreshes)
+        {
+            var response = await refresh;
+            if (response.StatusCode == HttpStatusCode.OK)
+            {
+                issued.Add((await ReadTokensAsync(response)).Refresh);
+            }
+            else
+            {
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+        }
+
+        var stored = await StoredAsync(session.User.Id);
+        Assert.Null(stored.RefreshToken);
+        Assert.Null(stored.PreviousRefreshToken);
+        foreach (var token in issued.Distinct().Prepend(session.RefreshToken))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(token)).StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task Signing_in_again_drops_the_grace_period_token()
+    {
+        var session = await SignInAsync();
+        await RotateAsync(session.RefreshToken);
+
+        var (_, fresh) = await LoginAsync(session.User.Email);
+
+        var stored = await StoredAsync(session.User.Id);
+        Assert.Equal(fresh, stored.RefreshToken);
+        Assert.Null(stored.PreviousRefreshToken);
+        Assert.Null(stored.PreviousValidUntilUtc);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(session.RefreshToken)).StatusCode);
+        Assert.NotEqual(fresh, await RotateAsync(fresh));
     }
 
     [Fact]
