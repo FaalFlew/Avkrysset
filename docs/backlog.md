@@ -5,7 +5,7 @@ Roadmap phases: `docs/plans/pdf-export-and-organizations.md`.
 
 ## Next (before Phase 3)
 
-### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH
+### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH (FIX IN PROGRESS: feature/auth-session-race)
 **Reported 2026-10-23.** Signed in but idle for hours (Azure has unloaded the API and the access token has expired). Creating a
 task hangs on the cold start; the user logs out, starts using the guest planner, and is suddenly switched back to the account.
 **Cause (confirmed in code):**
@@ -62,20 +62,15 @@ calendar filtered by project (one calendar catches double-bookings across projec
   `locale`, so only direct API users see it.
 
 ### 8. Auth hardening found while fixing item 1 — SMALL–MEDIUM
-- `Refresh.cs` finds the user by refresh token with a SQL lookup that is case-insensitive (default collation): a case-swapped
-  token matches. Use the exact, constant-time `RefreshTokenComparison` helper (added for logout) in refresh too.
-- Login and refresh ignore failed `UserManager.UpdateAsync` results; login and refresh have no rate limiting.
+- ~~Refresh exact token match, race-safe refresh save, previous-token grace period~~ — DONE in `feature/auth-session-race`
+  (2026-10-24; see `docs/plans/auth-session-race.md` "Refresh grace period").
+- Login ignores a failed `UserManager.UpdateAsync` result; login and refresh have no rate limiting.
 - Every token lookup scans `AspNetUsers` (`RefreshToken` is `nvarchar(max)`, unindexed) — store a hash in an indexed column.
 - One refresh token per user: signing in on a second device signs the first one out on its next refresh (design decision to
   revisit if multi-device use matters).
 - Per-IP rate limits depend on the client IP reaching the app; on Azure configure forwarded headers so users don't share a bucket.
 - Access-token lifetime is hard-coded (15 min in `TokenService.cs`) and JWT `ClockSkew` is the 5-minute default, so expired tokens
   are accepted for up to 5 extra minutes — make the lifetime configurable and use a small ClockSkew (e.g. 30 s).
-- Refresh-token grace period: if the client gives up on a refresh (45 s timeout) that the cold server processes afterwards, the
-  rotated token is lost and the next refresh is refused → logout. Accept the immediately-previous refresh token for a short
-  window (e.g. 2 min) after rotation and re-issue the current pair, so a lost refresh response can't end the session.
-- Refresh still returns 200 when its save loses a race with logout (the revoke wins in the DB, but a 15-minute access token was
-  already issued; the fixed client discards it) — check the save result and return 401.
 
 ## Housekeeping
 - Move secrets from the deployed `appsettings.Secrets.json` to Azure App Settings (long-term, cleaner).
