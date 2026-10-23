@@ -61,6 +61,15 @@ calendar filtered by project (one calendar catches double-bookings across projec
 - Report CSVs requested without `locale` fall back to invariant labels ("2026 January – 2026 December"); the app always sends
   `locale`, so only direct API users see it.
 
+### 8. Auth hardening found while fixing item 1 — SMALL–MEDIUM
+- `Refresh.cs` finds the user by refresh token with a SQL lookup that is case-insensitive (default collation): a case-swapped
+  token matches. Use the exact, constant-time `RefreshTokenComparison` helper (added for logout) in refresh too.
+- Login and refresh ignore failed `UserManager.UpdateAsync` results; login and refresh have no rate limiting.
+- Every token lookup scans `AspNetUsers` (`RefreshToken` is `nvarchar(max)`, unindexed) — store a hash in an indexed column.
+- One refresh token per user: signing in on a second device signs the first one out on its next refresh (design decision to
+  revisit if multi-device use matters).
+- Per-IP rate limits depend on the client IP reaching the app; on Azure configure forwarded headers so users don't share a bucket.
+
 ## Housekeeping
 - Move secrets from the deployed `appsettings.Secrets.json` to Azure App Settings (long-term, cleaner).
 - Confirm production doesn't use the old JWT secret that is visible in the public repo's early history.
