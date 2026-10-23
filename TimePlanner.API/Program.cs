@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using TimePlanner.API.Behaviors;
 using TimePlanner.API.Controllers;
+using TimePlanner.API.Features.Commands.Auth;
 using TimePlanner.API.Features.Reports;
 using QuestPDF.Infrastructure;
 
@@ -117,6 +118,9 @@ try
     builder.Services.AddScoped<ReportModelBuilder>();
     builder.Services.AddSingleton<IReportRenderer, PdfReportRenderer>();
     builder.Services.AddReportRateLimiting(builder.Configuration);
+
+    // SIGN-OUT: POST /api/auth/logout is anonymous, so it is rate limited per client IP.
+    builder.Services.AddLogoutRateLimiting(builder.Configuration);
 
     // CORS POLICY SETUP (CRUCIAL FIX)
     builder.Services.AddCors(options =>
@@ -247,7 +251,8 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
-    // Report endpoints only (per-user token bucket + global render concurrency); needs the authenticated user.
+    // Report endpoints (per-user token bucket + global render concurrency; needs the authenticated user) and
+    // sign-out (per client IP). Other endpoints are not limited; GET /api/health explicitly opts out.
     app.UseRateLimiter();
 
     // 6. Map Endpoints

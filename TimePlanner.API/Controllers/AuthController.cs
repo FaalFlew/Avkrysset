@@ -1,5 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.RateLimiting;
 using TimePlanner.API.DTOs.Auth;
 using TimePlanner.API.Features.Commands.Auth;
 using Microsoft.AspNetCore.Authorization;
@@ -99,17 +101,23 @@ public class AuthController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Ends the session server-side. Anonymous on purpose: it must also work when the access token has expired
+    /// (e.g. the user signs out while the API is cold). Revokes the stored refresh token when the caller has a valid
+    /// access token, and/or when the optional body's refreshToken is the one stored for a user (expired or not).
+    /// Always 204, whether or not anything was revoked; rate limited per client IP (429 + Retry-After).
+    /// </summary>
     [HttpPost("logout")]
-    [Authorize] // IMPORTANT: This endpoint requires a valid access token.
+    [AllowAnonymous]
+    [EnableRateLimiting(LogoutRateLimitPolicy.Name)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Logout()
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> Logout(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] LogoutRequest? request)
     {
-        var command = new LogoutCommand();
-        await _mediator.Send(command);
+        await _mediator.Send(new LogoutCommand(request?.RefreshToken));
 
-        // A successful logout typically returns 204 No Content,
-        // as there's no data to return to the client.
+        // No body, and nothing that tells the caller whether a session was found.
         return NoContent();
     }
 }
