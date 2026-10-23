@@ -25,17 +25,36 @@ async function register(userData: RegisterRequest): Promise<void> {
   await apiService.post("/auth/register", userData);
 }
 
+/**
+ * Exchange a refresh token for new tokens. Session-independent: it is never aborted when the user
+ * logs out meanwhile, so the auth store learns the rotated refresh token and can revoke it.
+ */
 async function refresh(refreshToken: string): Promise<AuthResponse> {
-  const response = await apiService.post<AuthResponse>("/auth/refresh", {
-    refreshToken,
-  });
+  const response = await apiService.post<AuthResponse>(
+    "/auth/refresh",
+    { refreshToken },
+    { sessionIndependent: true }
+  );
   return response.data;
 }
 
-// Logout the user by invalidating the refresh token on the server
-async function logout(): Promise<void> {
-  // The logout endpoint requires authentication, which our apiService interceptor handles automatically.
-  await apiService.post("/auth/logout");
+/**
+ * Invalidate a refresh token on the server (POST /auth/logout { refreshToken } → 204). Works
+ * without a valid access token, and deliberately sends none: an access token would make the
+ * server revoke the CURRENT session of that user, which may be a newer one.
+ */
+async function logout(refreshToken: string): Promise<void> {
+  await apiService.post("/auth/logout", { refreshToken }, { sessionIndependent: true });
+}
+
+/**
+ * Background logout: revoke `refreshToken` without waiting (a cold server may take a while).
+ * Never throws; if it fails, the token simply expires on its own.
+ */
+function revokeRefreshToken(refreshToken: string): void {
+  logout(refreshToken).catch((error: unknown) => {
+    console.warn("Could not revoke the refresh token on the server:", error);
+  });
 }
 
 // ADDED: Function to confirm a user's email
@@ -68,6 +87,7 @@ export const authService = {
   login,
   register,
   logout,
+  revokeRefreshToken,
   refresh,
   confirmEmail,
   forgotPassword,

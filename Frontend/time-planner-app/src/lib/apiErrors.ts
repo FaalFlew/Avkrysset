@@ -10,6 +10,8 @@
 //   no response: timeout copy (ECONNABORTED / ETIMEDOUT) or the network copy
 // Blob responses (file downloads) carry their JSON error body as a Blob: run readBlobError()
 // first, then apiErrorMessage().
+// SessionChangedError (a response for a session that has ended) is never shown: check
+// isSessionChangedError() first and stay silent.
 
 import { now, parseApiInstant } from "@/lib/datetime";
 
@@ -38,6 +40,27 @@ function asApiError(error: unknown): ApiErrorLike {
 export function httpStatus(error: unknown): number | null {
   const status = asApiError(error).response?.status;
   return typeof status === "number" ? status : null;
+}
+
+/**
+ * The request belonged to a session that has ended (logout, or a new login) before it settled.
+ * The API layer rejects such responses and retries with this error before any caller sees them,
+ * so data of one session can never land in another. Callers stay silent: no toast, no state change.
+ */
+export class SessionChangedError extends Error {
+  readonly isSessionChanged = true;
+
+  constructor(message = "The session changed while this request was running.") {
+    super(message);
+    this.name = "SessionChangedError";
+  }
+}
+
+export function isSessionChangedError(error: unknown): error is SessionChangedError {
+  return (
+    error instanceof SessionChangedError ||
+    (!!error && typeof error === "object" && (error as { isSessionChanged?: unknown }).isSessionChanged === true)
+  );
 }
 
 export const isForbidden = (error: unknown) => httpStatus(error) === 403;

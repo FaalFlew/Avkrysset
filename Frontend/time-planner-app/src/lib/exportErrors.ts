@@ -4,6 +4,7 @@
 import {
   NETWORK_ERROR_MESSAGE,
   httpStatus,
+  isSessionChangedError,
   retryAfterSeconds,
   serverMessage,
   type ApiErrorLike,
@@ -27,9 +28,13 @@ export const formatLabelSentence = (format: ExportKind) => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 
-/** True when the request was cancelled (AbortController / axios CanceledError). */
+/**
+ * True when the request was cancelled (AbortController / axios CanceledError), or dropped because
+ * the user logged out meanwhile (SessionChangedError): nothing to report either way.
+ */
 export function isCancelledRequest(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
+  if (isSessionChangedError(error)) return true;
   const e = error as ApiErrorLike & { name?: string; __CANCEL__?: boolean };
   return e.code === "ERR_CANCELED" || e.name === "CanceledError" || e.name === "AbortError" || e.__CANCEL__ === true;
 }

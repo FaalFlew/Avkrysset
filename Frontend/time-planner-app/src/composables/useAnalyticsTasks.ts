@@ -17,6 +17,7 @@ import { useTimeZone } from "@/composables/useClock";
 import { useCurrentUserId } from "@/composables/useCurrentUser";
 import { analyticsRange, type AnalyticsSelection } from "@/lib/analyticsBuckets";
 import { isInRange, type InstantRange } from "@/lib/datetime";
+import { isSessionChangedError } from "@/lib/apiErrors";
 import { buildTaskListRows, type TaskListCategory, type TaskListContext, type TaskListRow } from "@/lib/taskList";
 
 /** Store actions that change tasks; the list refetches after one succeeds. */
@@ -105,7 +106,7 @@ export function useAnalyticsTasks(options: AnalyticsTasksOptions): AnalyticsTask
       loadedSelection.value = sel;
       error.value = null;
     } catch (e) {
-      if (requestId !== latestRequest) return;
+      if (requestId !== latestRequest || isSessionChangedError(e)) return; // superseded / logged out
       console.error("Failed to fetch the analytics task list", e);
       error.value = errorMessage(e);
     } finally {

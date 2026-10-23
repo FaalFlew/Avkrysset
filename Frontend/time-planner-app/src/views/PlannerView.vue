@@ -22,6 +22,7 @@ import { useToday } from "@/composables/useClock";
 import { useTaskEditor } from "@/composables/useTaskEditor";
 import { useHotkeyScope, isNeutralTarget } from "@/composables/useHotkeys";
 import { toDateKey, type DateKey } from "@/lib/datetime";
+import { isMutationSlow } from "@/services/slowRequests";
 
 const ONBOARDING_KEY = "tp-onboarding-dismissed";
 const SLOW_LOADING_MS = 2500;
@@ -203,7 +204,10 @@ const showOnboarding = computed(
               Retry
             </UiButton>
           </div>
-          <p v-else-if="isBusy && showSlowHint" class="pill">Waking up the server… this can take a few seconds.</p>
+          <!-- Not twice: the app-wide indicator already says it while a change is waiting. -->
+          <p v-else-if="isBusy && showSlowHint && !isMutationSlow" class="pill">
+            Waking up the server… this can take a few seconds.
+          </p>
         </div>
 
         <PlannerOnboarding
