@@ -43,6 +43,16 @@ export interface MenuItem {
   /** Shown as <UiKbd> on the right, e.g. ['Mod', 'Enter']. */
   shortcut?: string[];
   disabled?: boolean;
+  /** Secondary line under the label (e.g. why the item is disabled); aria-describedby. */
+  description?: string;
+  /** Radio item (role="menuitemradio"): true shows a check mark. Leave undefined for plain items. */
+  checked?: boolean;
+  /** Selecting keeps the menu open (e.g. a radio choice). */
+  keepOpen?: boolean;
+  /** Group label: consecutive items with the same group form a labelled role="group". */
+  group?: string;
+  /** Accessible name when it should differ from `label`. */
+  ariaLabel?: string;
   onSelect: () => void;
 }
 

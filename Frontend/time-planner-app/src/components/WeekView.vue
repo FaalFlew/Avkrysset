@@ -104,8 +104,6 @@ const emit = defineEmits<{
   navigate: [day: DateKey];
   /** Show the previous (-1) / next (+1) week (day on phones) while a dragged task is held at an edge. */
   advance: [side: -1 | 1];
-  /** A task drag started (true) or ended (false). */
-  dragging: [active: boolean];
 }>();
 
 const taskStore = useTaskStore();
@@ -292,12 +290,6 @@ watch(
   () => {
     if (drag.dragTaskId.value) uiStore.announce(`Showing ${formatGridRegionLabel(props.days)}`);
   }
-);
-
-// Let the planner hide overlays (empty-week pill) while a drag runs.
-watch(
-  () => !!drag.dragTaskId.value,
-  (dragging) => emit("dragging", dragging)
 );
 
 // Focus requests (e.g. Undo of a cross-week move navigated back): focus the task once it renders,

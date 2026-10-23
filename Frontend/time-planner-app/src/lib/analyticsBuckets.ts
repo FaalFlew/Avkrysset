@@ -60,7 +60,20 @@ export function clampIsoWeek(isoYear: number, week: number): number {
   return clamp(Math.round(week) || 1, 1, isoWeeksInYear(isoYear));
 }
 
-function normalized(sel: AnalyticsSelection) {
+/** Selection bounds clamped to valid values (months 0–11, ISO weeks 1–52/53, start ≤ end). */
+export interface SelectionBounds {
+  monthStart: number;
+  monthEnd: number;
+  weekStart: number;
+  weekEnd: number;
+  dailyWeek: number;
+}
+
+export function normalizedBounds(sel: AnalyticsSelection): SelectionBounds {
+  return normalized(sel);
+}
+
+function normalized(sel: AnalyticsSelection): SelectionBounds {
   const monthStart = clamp(sel.monthRange.start, 0, 11);
   const weekStart = clampIsoWeek(sel.year, sel.weekRange.start);
   return {

@@ -229,4 +229,23 @@ const tiles = computed<Tile[]>(() => {
     line-height: var(--lh-24);
   }
 }
+
+/* Paper: one row of four, slightly smaller values. */
+@media print {
+  .kpi-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+  .kpi {
+    padding: var(--space-3);
+    break-inside: avoid;
+  }
+  .kpi__value {
+    font-size: var(--fs-24);
+    line-height: var(--lh-24);
+  }
+  .kpi__value--text {
+    font-size: var(--fs-15);
+  }
+}
 </style>

@@ -1,0 +1,98 @@
+/*
+ * src/styles/print.css — printing the analytics report ("Print / Save as PDF", or the browser's
+ * own Print while /analytics is open).
+ *
+ * Scope: the page that renders `.print-report` (or <html class="is-printing">, set by
+ * usePrintMode, for browsers without :has()). Other pages print as before.
+ * Paper: `@page size` (A4 | letter) is injected by usePrintMode from the paper preference; the
+ * margin is 14 mm. Light theme: tokens.css never applies the dark tokens in print, and
+ * usePrintMode switches <html data-theme> so the charts redraw in light colors at 2× resolution.
+ * Component internals (chart sizes, expanded data tables, KPI grid) live in each component's
+ * `@media print` block.
+ */
+
+@page {
+  margin: 14mm;
+}
+
+/* Print-only elements (the report header) never show on screen. */
+@media not print {
+  .print-only {
+    display: none !important;
+  }
+}
+
+@media print {
+  /* ---------- Page ---------- */
+  :root:is(.is-printing, :has(.print-report)),
+  :root:is(.is-printing, :has(.print-report)) body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: var(--bg-app) !important;
+  }
+
+  /* Category colors (dots, meters) and chart images print as shown. */
+  :root:is(.is-printing, :has(.print-report)) .print-report,
+  :root:is(.is-printing, :has(.print-report)) .print-report * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Nothing moves on paper. */
+  :root:is(.is-printing, :has(.print-report)) *,
+  :root:is(.is-printing, :has(.print-report)) *::before,
+  :root:is(.is-printing, :has(.print-report)) *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  /* ---------- App shell: only the report prints ---------- */
+  :root:is(.is-printing, :has(.print-report)) .app-shell {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    background: none !important;
+  }
+  :root:is(.is-printing, :has(.print-report)) .app-shell__main {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  :root:is(.is-printing, :has(.print-report)) :is(
+      .skip-link,
+      .app-shell__sidebar,
+      .tabbar,
+      .fab,
+      .drawer,
+      .toast-region,
+      [data-ui-floating],
+      [data-print-hide],
+      .ui-spinner,
+      .ui-loading-bar
+    ) {
+    display: none !important;
+  }
+
+  /* ---------- Pagination ---------- */
+  :root:is(.is-printing, :has(.print-report)) .print-report :is(h1, h2, h3, .ui-card__header) {
+    break-after: avoid;
+  }
+  :root:is(.is-printing, :has(.print-report)) .print-report :is(figure, tr, .kpi, .kpi-list) {
+    break-inside: avoid;
+  }
+  /* Table headers repeat on every page; totals print once, at the end. */
+  :root:is(.is-printing, :has(.print-report)) .print-report thead {
+    display: table-header-group;
+  }
+  :root:is(.is-printing, :has(.print-report)) .print-report tfoot {
+    display: table-row-group;
+  }
+
+  /* Cards: flat outlines, no shadows (they print as grey smudges). */
+  :root:is(.is-printing, :has(.print-report)) .print-report .ui-card {
+    box-shadow: none !important;
+  }
+}
