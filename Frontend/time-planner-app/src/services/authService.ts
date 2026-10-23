@@ -1,7 +1,7 @@
 // NEW FILE: src/services/authService.ts
 
 import apiService from "./apiService";
-import type { AuthResponse } from "@/types";
+import type { AuthResponse, MigrationData } from "@/types";
 import type {
   RegisterRequest,
   LoginRequest,

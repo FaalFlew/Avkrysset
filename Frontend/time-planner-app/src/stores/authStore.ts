@@ -8,13 +8,8 @@ import type {
   RegisterRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
+  ResendConfirmationRequest,
 } from "@/types/auth";
-
-/** HTTP status of a failed axios request, or `null` when there was no response (network). */
-function httpStatusOf(error: unknown): number | null {
-  const status = (error as { response?: { status?: unknown } } | null)?.response?.status;
-  return typeof status === "number" ? status : null;
-}
 
 // Define the shape of our authentication state
 interface AuthState {
@@ -22,11 +17,6 @@ interface AuthState {
   refreshToken: string | null;
   status: "guest" | "loggedIn" | "loading" | "error";
   registeredEmail: string | null;
-  /**
-   * Last login/register failure (`status` = HTTP status, `null` = no response, i.e. network).
-   * Read by the auth views (components/auth/authErrors.ts) for precise inline errors.
-   */
-  lastError: { status: number | null } | null;
 }
 
 export const useAuthStore = defineStore("auth", {
@@ -36,7 +26,6 @@ export const useAuthStore = defineStore("auth", {
     refreshToken: localStorage.getItem("refreshToken") || null,
     status: localStorage.getItem("accessToken") ? "loggedIn" : "guest",
     registeredEmail: null as string | null,
-    lastError: null,
   }),
 
   getters: {
@@ -80,6 +69,7 @@ export const useAuthStore = defineStore("auth", {
 
         // 3. If successful, update the state with the new tokens.
         this._setTokens(accessToken, refreshToken);
+        console.log("Token refreshed successfully.");
       } catch (error) {
         // 4. If refreshing fails (e.g., refresh token is expired or invalid)...
         console.error("Failed to refresh token:", error);
@@ -94,17 +84,20 @@ export const useAuthStore = defineStore("auth", {
     // Action to log in a user
     async login(credentials: LoginRequest) {
       this.status = "loading";
-      this.lastError = null;
+      const uiStore = useUIStore();
       try {
         const { accessToken, refreshToken } = await authService.login(
           credentials
         );
         this._setTokens(accessToken, refreshToken);
+        // We will trigger the taskStore to reload data in a later step.
         return true;
       } catch (error) {
         this.status = "error";
-        // No toast: LoginView shows an inline error (copy chosen from `lastError`).
-        this.lastError = { status: httpStatusOf(error) };
+        uiStore.showToast(
+          "Login failed. Please check your credentials.",
+          "error"
+        );
         console.error("Login error:", error);
         return false;
       }
@@ -113,16 +106,20 @@ export const useAuthStore = defineStore("auth", {
     // Action to register a user
     async register(userData: RegisterRequest) {
       this.status = "loading";
-      this.lastError = null;
+      const uiStore = useUIStore();
       try {
         await authService.register(userData);
         this.status = "guest"; // User is not logged in after registration
         this.registeredEmail = userData.email;
+        // We will trigger the taskStore to clear local data in a later step if migration occurred.
         return true;
-      } catch (error) {
+      } catch (error: any) {
         this.status = "error";
-        // No toast: RegisterView shows an inline error (copy chosen from `lastError`).
-        this.lastError = { status: httpStatusOf(error) };
+        const message =
+          error.response?.status === 409
+            ? "A user with this email already exists."
+            : "Registration failed. Please try again.";
+        uiStore.showToast(message, "error");
         console.error("Registration error:", error);
         return false;
       }
@@ -155,6 +152,7 @@ export const useAuthStore = defineStore("auth", {
 
     // Action to log out a user
     async logout() {
+      const uiStore = useUIStore();
       try {
         // Only call the backend if the user was considered logged in.
         // We check refreshToken here because accessToken might be null but a session could exist.
@@ -207,11 +205,9 @@ export const useAuthStore = defineStore("auth", {
         );
         this.status = "guest";
         return true;
-      } catch (error) {
-        const serverMessage = (error as { response?: { data?: { message?: unknown } } } | null)?.response
-          ?.data?.message;
+      } catch (error: any) {
         const message =
-          (typeof serverMessage === "string" && serverMessage) ||
+          error.response?.data?.message ||
           "Password reset failed. The link may be invalid or expired.";
         uiStore.showToast(message, "error");
         this.status = "error";

@@ -4,7 +4,6 @@ using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
-using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
@@ -27,7 +26,16 @@ public class GetOrganizationByIdQueryHandler : IRequestHandler<GetOrganizationBy
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be an active member to view the organization.
-        await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
+        var isMember = await _context.OrganizationMemberships.AnyAsync(m =>
+            m.OrganizationId == request.OrganizationId &&
+            m.UserId == currentUserId &&
+            m.Status == MembershipStatus.Active,
+            cancellationToken);
+
+        if (!isMember)
+        {
+            throw new UnauthorizedAccessException("You are not an active member of this organization.");
+        }
 
         var organization = await _context.Organizations
             .AsNoTracking()
@@ -37,7 +45,6 @@ public class GetOrganizationByIdQueryHandler : IRequestHandler<GetOrganizationBy
                 Id = o.Id,
                 Name = o.Name,
                 OwnerId = o.OwnerId,
-                TimeZoneId = o.TimeZoneId,
                 MemberJoinCode = o.MemberJoinCode,
                 MemberJoinCodeExpiryUtc = o.MemberJoinCodeExpiryUtc,
                 AdminJoinCode = o.AdminJoinCode,

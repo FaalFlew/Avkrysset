@@ -1,79 +1,95 @@
 <!-- src/components/ConfirmDialog.vue -->
-<script setup lang="ts">
-/**
- * ConfirmDialog — renders uiStore.confirmationDialog (uiStore.confirm(...) resolves with the answer).
- * Mount once (App.vue).
- *
- * Answers (unchanged semantics): Confirm → true, Cancel → false,
- * Esc / outside click / X → null (= abort; RegisterView relies on this).
- *
- * Optional hooks read through a narrow typed view (uiStore may add them later):
- *   confirmText / cancelText — button labels (default "Confirm" / "Cancel")
- *   tone: ConfirmTone — 'danger' renders a red confirm button and focuses Cancel first;
- *     otherwise the confirm button is primary and focused first.
- */
-import { computed } from "vue";
-import { useUIStore } from "@/stores/uiStore";
-import UiDialog from "@/components/ui/UiDialog.vue";
-import UiButton from "@/components/ui/UiButton.vue";
-import type { ConfirmTone, OverlayCloseReason } from "@/components/ui/types";
-
-interface ConfirmView {
-  isOpen: boolean;
-  title: string;
-  message: string;
-  confirmText?: string;
-  cancelText?: string;
-  tone?: ConfirmTone;
-}
-
-const uiStore = useUIStore();
-const dialog = computed(() => uiStore.confirmationDialog as typeof uiStore.confirmationDialog & ConfirmView);
-
-const isDanger = computed(() => dialog.value.tone === "danger");
-const confirmText = computed(() => dialog.value.confirmText || "Confirm");
-const cancelText = computed(() => dialog.value.cancelText || "Cancel");
-const initialFocus = computed(() => (isDanger.value ? "[data-confirm-cancel]" : "[data-confirm-accept]"));
-
-function answer(value: boolean): void {
-  uiStore.answerConfirmation(value);
-}
-
-function onDismiss(_reason: OverlayCloseReason): void {
-  uiStore.answerConfirmation(null);
-}
-</script>
-
 <template>
-  <UiDialog
-    :open="dialog.isOpen"
-    :title="dialog.title"
-    :description="dialog.message"
-    size="sm"
-    role="alertdialog"
-    :initial-focus="initialFocus"
-    @close="onDismiss"
+  <div
+    v-if="uiStore.confirmationDialog.isOpen"
+    class="modal-overlay"
+    @click.self="abort"
   >
-    <template #footer>
-      <UiButton class="confirm-dialog__button" variant="secondary" data-confirm-cancel @click="answer(false)">
-        {{ cancelText }}
-      </UiButton>
-      <UiButton
-        class="confirm-dialog__button"
-        :variant="isDanger ? 'danger' : 'primary'"
-        data-confirm-accept
-        @click="answer(true)"
-      >
-        {{ confirmText }}
-      </UiButton>
-    </template>
-  </UiDialog>
+    <div class="modal-content">
+      <button @click="abort" class="close-button">&times;</button>
+      <!-- Call 'abort' -->
+
+      <h3>{{ uiStore.confirmationDialog.title }}</h3>
+      <p>{{ uiStore.confirmationDialog.message }}</p>
+      <div class="form-actions">
+        <!-- The "No" button resolves the promise with `false` -->
+        <button type="button" class="btn-secondary" @click="answer(false)">
+          {{ (uiStore.confirmationDialog as any).cancelText }}
+        </button>
+        <!-- The "Confirm" button resolves the promise with `true` -->
+        <button type="button" class="btn-primary" @click="answer(true)">
+          {{ (uiStore.confirmationDialog as any).confirmText }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
+<script setup lang="ts">
+import { useUIStore } from "@/stores/uiStore";
+
+const uiStore = useUIStore();
+
+// This function resolves the promise with a boolean value (true or false).
+const answer = (confirmation: boolean) => {
+  uiStore.answerConfirmation(confirmation);
+};
+
+// This function resolves the promise with `null` to signal an abort.
+const abort = () => {
+  uiStore.answerConfirmation(null);
+};
+</script>
+
 <style scoped>
-@media (max-width: 767.98px) {
-  .confirm-dialog__button {
-    flex: 1 1 0;
-  }
+/* MODIFIED: Using more standard button classes */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+.modal-content {
+  position: relative;
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+.close-button {
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  background: none;
+  border: none;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #aaa;
+  cursor: pointer;
+}
+.close-button:hover {
+  color: #333;
+}
+h3 {
+  margin-top: 0;
+  color: #333;
+}
+p {
+  color: #555;
+  margin-bottom: 1.5rem;
+}
+.form-actions {
+  display: flex;
+  justify-content: center; /* Centering the buttons */
+  gap: 1rem;
 }
 </style>

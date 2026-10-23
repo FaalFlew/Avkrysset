@@ -1,37 +1,17 @@
+<!-- NEW FILE: src/views/AuthCallbackView.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import { CircleCheck, TriangleAlert } from "lucide-vue-next";
+import { ref, onMounted } from "vue";
+import { useRoute, RouterLink } from "vue-router";
 import { authService } from "@/services/authService";
-import AuthLayout from "@/components/auth/AuthLayout.vue";
-import UiButton from "@/components/ui/UiButton.vue";
-import UiSpinner from "@/components/ui/UiSpinner.vue";
 
 // Define the state for our view
 type ConfirmationStatus = "confirming" | "success" | "error";
 const status = ref<ConfirmationStatus>("confirming");
-const errorMessage = ref("An unknown error occurred. Please try the link again or contact support.");
+const errorMessage = ref(
+  "An unknown error occurred. Please try the link again or contact support."
+);
 
 const route = useRoute();
-const layout = ref<InstanceType<typeof AuthLayout> | null>(null);
-
-const title = computed(() => {
-  switch (status.value) {
-    case "success":
-      return "Email confirmed";
-    case "error":
-      return "We couldn't confirm your email";
-    default:
-      return "Confirming your email…";
-  }
-});
-
-// Announce the outcome by moving focus to the (new) heading.
-watch(status, async (value) => {
-  if (value === "confirming") return;
-  await nextTick();
-  layout.value?.focusHeading();
-});
 
 onMounted(async () => {
   // 1. Get the userId and token from the URL query parameters
@@ -40,7 +20,8 @@ onMounted(async () => {
 
   // 2. Basic validation
   if (!userId || !token) {
-    errorMessage.value = "The confirmation link is invalid or incomplete. Please check the link in your email.";
+    errorMessage.value =
+      "The confirmation link is invalid or incomplete. Please check the link in your email.";
     status.value = "error";
     return;
   }
@@ -49,10 +30,11 @@ onMounted(async () => {
   try {
     await authService.confirmEmail(userId, token);
     status.value = "success";
-  } catch (error: unknown) {
+  } catch (error: any) {
     // If the backend returns an error (e.g., token expired, already used), display it.
-    const response = (error as { response?: { data?: { message?: string } } }).response;
-    errorMessage.value = response?.data?.message || "Email confirmation failed. The link may have expired.";
+    errorMessage.value =
+      error.response?.data?.message ||
+      "Email confirmation failed. The link may have expired.";
     status.value = "error";
     console.error("Email confirmation error:", error);
   }
@@ -60,44 +42,59 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AuthLayout
-    ref="layout"
-    :title="title"
-    :tone="status === 'success' ? 'success' : status === 'error' ? 'danger' : 'neutral'"
-    centered
-  >
-    <template #icon>
-      <UiSpinner v-if="status === 'confirming'" :size="20" />
-      <CircleCheck v-else-if="status === 'success'" :size="20" />
-      <TriangleAlert v-else :size="20" />
-    </template>
+  <div class="auth-container">
+    <!-- Show a loading spinner while confirming -->
+    <div v-if="status === 'confirming'">
+      <h2>Confirming Your Email...</h2>
+      <p>Please wait a moment.</p>
+      <!-- You can add a spinner component here -->
+    </div>
 
-    <template v-if="status === 'confirming'">
-      <p class="auth-text" role="status">This only takes a moment.</p>
-    </template>
+    <!-- Show a success message -->
+    <div v-else-if="status === 'success'">
+      <h2>Email Confirmed</h2>
+      <p>Your account has been successfully verified.</p>
+      <RouterLink to="/login" class="btn-primary">Proceed to Login</RouterLink>
+    </div>
 
-    <template v-else-if="status === 'success'">
-      <p class="auth-text">Your account is ready.</p>
-      <div class="auth-actions">
-        <UiButton to="/login" variant="primary" size="lg" block>Log in</UiButton>
-      </div>
-    </template>
-
-    <template v-else>
-      <p class="auth-text">{{ errorMessage }}</p>
-      <div class="auth-actions">
-        <UiButton to="/login" variant="primary" size="lg" block>Back to log in</UiButton>
-      </div>
-      <p class="auth-text auth-callback__hint">Log in to request a new link.</p>
-    </template>
-  </AuthLayout>
+    <!-- Show an error message -->
+    <div v-else-if="status === 'error'">
+      <h2>Confirmation Failed</h2>
+      <p>{{ errorMessage }}</p>
+      <p>
+        You can try to <RouterLink to="/login">log in</RouterLink> to resend the
+        confirmation email if needed.
+      </p>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.auth-text.auth-callback__hint {
-  margin-top: var(--space-3);
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  color: var(--text-tertiary);
+/* We can reuse the same styles as our Login/Register pages */
+.auth-container {
+  max-width: 450px;
+  margin: 50px auto;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+h2 {
+  margin-bottom: 1rem;
+}
+
+p {
+  color: #555;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+.btn-primary {
+  display: inline-block;
+  text-decoration: none;
+  padding: 0.8rem 1.5rem;
+  margin-top: 1rem;
 }
 </style>

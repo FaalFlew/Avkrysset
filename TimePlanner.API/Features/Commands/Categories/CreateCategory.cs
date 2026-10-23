@@ -13,13 +13,8 @@ public class CreateCategoryCommandValidator : AbstractValidator<CreateCategoryCo
 {
     public CreateCategoryCommandValidator()
     {
-        RuleFor(x => x.Name)
-            .NotEmpty().WithMessage("Category name is required.")
-            .MaximumLength(100).WithMessage("Category name can be at most 100 characters.");
-        // #RRGGBB only: the column holds 7 characters and the editor normalizes to that form.
-        RuleFor(x => x.Color).Cascade(CascadeMode.Stop)
-            .NotEmpty().WithMessage("Color is required.")
-            .Matches("^#[0-9A-Fa-f]{6}$").WithMessage("Color must be a hex color like #2F7FE0.");
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Color).NotEmpty().Length(7).Matches("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$");
     }
 }
 

@@ -1,374 +1,389 @@
-<!-- src/components/TaskTemplateManager.vue — the /templates page -->
-<script setup lang="ts">
-/**
- * Templates & categories. Templates are added to the calendar from the task editor's template
- * row (one click). Rows show Edit/Delete icon buttons (on hover/focus with a mouse, always on
- * touch). Deletes ask for confirmation in the danger tone.
- */
-import { computed, nextTick, ref } from "vue";
-import { storeToRefs } from "pinia";
-import { LayoutTemplate, Pencil, Plus, Trash2 } from "lucide-vue-next";
-import type { Category, TaskTemplate } from "@/types";
-import UiPageHeader from "@/components/ui/UiPageHeader.vue";
-import UiCard from "@/components/ui/UiCard.vue";
-import UiButton from "@/components/ui/UiButton.vue";
-import UiIconButton from "@/components/ui/UiIconButton.vue";
-import UiBadge from "@/components/ui/UiBadge.vue";
-import UiEmptyState from "@/components/ui/UiEmptyState.vue";
-import UiErrorState from "@/components/ui/UiErrorState.vue";
-import UiSkeleton from "@/components/ui/UiSkeleton.vue";
-import CategoryEditor from "./CategoryEditor.vue";
-import TemplateEditor from "./TemplateEditor.vue";
-import { useTasks } from "@/composables/useTasks";
-import { useTaskStore } from "@/stores/taskStore";
-import { useUIStore } from "@/stores/uiStore";
-import { formatDurationMinutes } from "@/lib/datetime";
-import { displayTitle } from "@/lib/plannerFormat";
-import { OTHER_COLOR } from "@/lib/categoryPalette";
-
-const { templates, categories, deleteTemplate, deleteCategory, otherCategoryId, getCategory } = useTasks();
-const taskStore = useTaskStore();
-const uiStore = useUIStore();
-const { isInitializing, initError } = storeToRefs(taskStore);
-
-const templateEditorOpen = ref(false);
-const templateToEdit = ref<TaskTemplate | null>(null);
-const categoryEditorOpen = ref(false);
-const categoryToEdit = ref<Category | null>(null);
-
-const isLoading = computed(() => isInitializing.value && templates.value.length === 0 && categories.value.length === 0);
-const showInitError = computed(() => !!initError.value && categories.value.length === 0);
-const onlyOther = computed(() => categories.value.length <= 1);
-
-function categoryOf(template: TaskTemplate) {
-  const category = getCategory(template.categoryId);
-  return {
-    color: category?.color ?? template.categoryColor ?? OTHER_COLOR,
-    name: category?.name ?? template.categoryName,
-  };
-}
-
-function newTemplate(): void {
-  templateToEdit.value = null;
-  templateEditorOpen.value = true;
-}
-function editTemplate(template: TaskTemplate): void {
-  templateToEdit.value = template;
-  templateEditorOpen.value = true;
-}
-function newCategory(): void {
-  categoryToEdit.value = null;
-  categoryEditorOpen.value = true;
-}
-function editCategory(category: Category): void {
-  categoryToEdit.value = category;
-  categoryEditorOpen.value = true;
-}
-
-const templateList = ref<HTMLElement | null>(null);
-const categoryList = ref<HTMLElement | null>(null);
-
-/**
- * After a row is deleted its buttons disappear (and focus with them): move focus to the row now
- * at the same position (or the one before), else to the card's "New …" button.
- */
-async function focusAfterRemoval(list: HTMLElement | null, index: number, fallback: string): Promise<void> {
-  await nextTick();
-  const rows = Array.from(list?.querySelectorAll<HTMLElement>("li.row") ?? []);
-  const candidates = [rows[index], rows[index - 1]];
-  for (const row of candidates) {
-    const button = row?.querySelector<HTMLElement>(".row__actions button");
-    if (button) {
-      button.focus();
-      return;
-    }
-  }
-  document.querySelector<HTMLElement>(`[data-focus-fallback="${fallback}"]`)?.focus();
-}
-
-async function confirmDeleteTemplate(template: TaskTemplate): Promise<void> {
-  const confirmed = await uiStore.confirm(
-    `Delete template “${template.title}”?`,
-    "Tasks you already scheduled from it stay on your calendar.",
-    { confirmText: "Delete template", cancelText: "Cancel", tone: "danger" }
-  );
-  if (!confirmed) return;
-  const index = templates.value.findIndex((t) => t.id === template.id);
-  if (await deleteTemplate(template.id)) await focusAfterRemoval(templateList.value, index, "templates");
-}
-
-async function confirmDeleteCategory(category: Category): Promise<void> {
-  const confirmed = await uiStore.confirm(
-    `Delete “${category.name}”?`,
-    "Tasks and templates in this category will move to “Other”. This can't be undone.",
-    { confirmText: "Delete category", cancelText: "Cancel", tone: "danger" }
-  );
-  if (!confirmed) return;
-  const index = categories.value.findIndex((c) => c.id === category.id);
-  if (await deleteCategory(category.id)) await focusAfterRemoval(categoryList.value, index, "categories");
-}
-
-function retry(): void {
-  void taskStore.initializeData();
-}
-</script>
-
 <template>
-  <div class="templates-page">
-    <UiPageHeader title="Templates & categories" subtitle="Reusable tasks you can add to your week in one click.">
-      <template #actions>
-        <UiButton variant="primary" data-focus-fallback="templates" @click="newTemplate">
-          <template #leading><Plus :size="16" /></template>
-          New template
-        </UiButton>
-      </template>
-    </UiPageHeader>
+  <div class="template-manager-container">
+    <div class="section">
+      <h2>Task Templates</h2>
+      <p>
+        Create templates for tasks you do often. Then, click a time slot in the
+        planner to apply them.
+      </p>
 
-    <UiErrorState
-      v-if="showInitError"
-      title="Couldn't load your categories and templates"
-      description="Check your connection and try again. If the server was asleep, it can take a few seconds to wake up."
-      :retrying="isInitializing"
-      @retry="retry"
-    />
-
-    <div v-else class="templates-page__grid">
-      <!-- Templates -->
-      <UiCard title="Templates" padding="none" class="list-card">
-        <template #actions>
-          <span class="list-card__count tabular" aria-hidden="true">{{ templates.length || "" }}</span>
-        </template>
-        <div v-if="isLoading" class="rows" aria-busy="true">
-          <span class="sr-only">Loading…</span>
-          <div v-for="i in 3" :key="i" class="row row--skeleton">
-            <UiSkeleton width="45%" :height="14" />
-          </div>
+      <div class="content-grid">
+        <!-- Create New Template Form -->
+        <div class="form-card">
+          <h3>Create New Template</h3>
+          <form @submit.prevent="handleSaveTemplate">
+            <div class="form-group">
+              <label for="template-title">Title</label>
+              <input
+                id="template-title"
+                v-model="newTemplate.title"
+                type="text"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="template-duration">Duration (hours)</label>
+              <input
+                id="template-duration"
+                v-model.number="newTemplate.duration"
+                type="number"
+                step="0.5"
+                min="0.5"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="template-category">Category</label>
+              <select
+                id="template-category"
+                v-model="newTemplate.categoryId"
+                @change="handleCategoryChange"
+                required
+              >
+                <option disabled value="">Please select one</option>
+                <option v-for="cat in categories" :key="cat.id" :value="cat.id">
+                  {{ cat.name }}
+                </option>
+                <option value="_createNew">-- Create New Category --</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-primary">Add Template</button>
+          </form>
         </div>
-        <UiEmptyState
-          v-else-if="templates.length === 0"
-          :icon="LayoutTemplate"
-          title="No templates yet"
-          description="Save tasks you repeat — like “Deep work · 2h” — and add them to your week in one click."
-          size="sm"
-          :heading-level="3"
-        >
-          <template #actions>
-            <UiButton variant="secondary" size="sm" @click="newTemplate">
-              <template #leading><Plus :size="14" /></template>
-              New template
-            </UiButton>
-          </template>
-        </UiEmptyState>
-        <ul v-else ref="templateList" role="list" class="rows">
-          <li v-for="template in templates" :key="template.id" class="row" :style="{ '--cat': categoryOf(template).color }">
-            <div class="row__main">
-              <span class="row__title" :title="displayTitle(template.title, 'Untitled template')">{{ displayTitle(template.title, "Untitled template") }}</span>
-              <span class="row__meta tabular">
-                <span class="row__duration">{{ formatDurationMinutes(template.duration * 60) }} ·</span>
-                <span class="row__dot" aria-hidden="true" />
-                <span class="row__category" :title="categoryOf(template).name">{{ categoryOf(template).name }}</span>
-              </span>
-            </div>
-            <div class="row__actions">
-              <UiIconButton :label="`Edit template ${template.title}`" size="sm" @click="editTemplate(template)">
-                <Pencil :size="16" />
-              </UiIconButton>
-              <UiIconButton
-                :label="`Delete template ${template.title}`"
-                variant="danger-ghost"
-                size="sm"
-                @click="confirmDeleteTemplate(template)"
-              >
-                <Trash2 :size="16" />
-              </UiIconButton>
-            </div>
-          </li>
-        </ul>
-      </UiCard>
 
-      <!-- Categories -->
-      <UiCard title="Categories" padding="none" class="list-card">
-        <template #actions>
-          <UiButton variant="ghost" size="sm" data-focus-fallback="categories" @click="newCategory">
-            <template #leading><Plus :size="14" /></template>
-            New category
-          </UiButton>
-        </template>
-        <ul ref="categoryList" role="list" class="rows">
-          <li v-for="category in categories" :key="category.id" class="row row--category">
-            <span class="row__swatch" :style="{ backgroundColor: category.color }" aria-hidden="true" />
-            <span class="row__title" :title="category.name">{{ category.name }}</span>
-            <UiBadge v-if="category.id === otherCategoryId" class="row__badge">Default</UiBadge>
-            <div v-else class="row__actions">
-              <UiIconButton :label="`Edit category ${category.name}`" size="sm" @click="editCategory(category)">
-                <Pencil :size="16" />
-              </UiIconButton>
-              <UiIconButton
-                :label="`Delete category ${category.name}`"
-                variant="danger-ghost"
-                size="sm"
-                @click="confirmDeleteCategory(category)"
+        <!-- List of Existing Templates -->
+        <div class="list-card">
+          <h3>Existing Templates</h3>
+          <ul v-if="templates.length > 0" class="existing-templates-list">
+            <li v-for="template in templates" :key="template.id">
+              <span class="template-info">
+                <span
+                  class="template-title"
+                  :style="{
+                    borderLeftColor: getCategory(template.categoryId)?.color,
+                  }"
+                >
+                  {{ template.title }}
+                </span>
+                <span class="template-details">
+                  ({{ template.duration }}h,
+                  {{ getCategory(template.categoryId)?.name }})
+                </span>
+              </span>
+              <!-- UPDATED DELETE BUTTON -->
+              <button
+                @click="handleDeleteTemplate(template.id)"
+                class="btn-danger"
               >
-                <Trash2 :size="16" />
-              </UiIconButton>
-            </div>
-          </li>
-        </ul>
-        <p v-if="onlyOther && !isLoading" class="list-card__helper">
-          Add categories to color-code your week.
-          <button type="button" class="link-button" @click="newCategory">+ New category</button>
-        </p>
-      </UiCard>
+                Delete
+              </button>
+            </li>
+          </ul>
+          <p v-else>No templates created yet.</p>
+        </div>
+      </div>
     </div>
 
-    <TemplateEditor v-model:open="templateEditorOpen" :template-to-edit="templateToEdit" />
-    <CategoryEditor v-model:open="categoryEditorOpen" :category-to-edit="categoryToEdit" />
+    <!-- CATEGORY MANAGEMENT SECTION -->
+    <div class="section">
+      <h2>Manage Categories</h2>
+      <p>
+        Edit or delete your custom categories. Deleting a category will
+        re-assign its tasks to "Other".
+      </p>
+      <div class="category-list-card">
+        <ul>
+          <li v-for="category in categories" :key="category.id">
+            <span class="category-info">
+              <span
+                class="category-color-dot"
+                :style="{ backgroundColor: category.color }"
+              ></span>
+              <span class="category-name">{{ category.name }}</span>
+            </span>
+            <div
+              v-if="category.id !== otherCategoryId"
+              class="category-actions"
+            >
+              <button @click="editCategory(category)" class="btn-edit-small">
+                Edit
+              </button>
+              <!-- UPDATED DELETE BUTTON -->
+              <button
+                @click="handleDeleteCategory(category.id)"
+                class="btn-danger"
+              >
+                Delete
+              </button>
+            </div>
+            <div v-else class="category-actions">
+              <span class="default-tag">Default</span>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
   </div>
+
+  <Teleport to="body">
+    <CategoryEditor
+      v-if="isCategoryEditorOpen"
+      :category-to-edit="categoryToEdit"
+      @close="closeCategoryEditor"
+      @category-created="onCategoryCreated"
+    />
+  </Teleport>
 </template>
+<script setup lang="ts">
+import { ref } from "vue";
+import { useTasks } from "@/composables/useTasks";
+import { useUIStore } from "@/stores/uiStore";
+import { Category } from "@/types";
+import CategoryEditor from "./CategoryEditor.vue";
+
+// --- COMPONENT STATE & ACTIONS ---
+const {
+  templates,
+  categories,
+  addTemplate,
+  deleteTemplate,
+  getCategory,
+  deleteCategory: storeDeleteCategory, // Renamed to avoid conflict
+  otherCategoryId,
+} = useTasks();
+
+const uiStore = useUIStore();
+
+// State for the "Create New Template" form
+const newTemplate = ref({
+  title: "",
+  duration: 1,
+  categoryId: "", // Default to empty string for the "Please select" option
+});
+
+// State for the Category Editor modal
+const isCategoryEditorOpen = ref(false);
+const categoryToEdit = ref<Category | null>(null);
+
+// --- METHODS ---
+
+// Closes the category editor and resets its state
+const closeCategoryEditor = () => {
+  isCategoryEditorOpen.value = false;
+  categoryToEdit.value = null;
+};
+
+// Opens the category editor in "edit" mode
+const editCategory = (category: Category) => {
+  categoryToEdit.value = category;
+  isCategoryEditorOpen.value = true;
+};
+
+// Handles the logic for creating a new template from the form
+const handleSaveTemplate = async () => {
+  if (!newTemplate.value.title || !newTemplate.value.categoryId) return;
+  // Await the async action
+  await addTemplate(newTemplate.value);
+  // Reset the form for the next entry
+  newTemplate.value = { title: "", duration: 1, categoryId: "" };
+};
+
+// Handles deleting a template with confirmation
+const handleDeleteTemplate = async (id: string) => {
+  const confirmed = await uiStore.confirm(
+    "Delete Template?",
+    "Are you sure you want to delete this template? This action cannot be undone."
+  );
+  if (confirmed) {
+    await deleteTemplate(id);
+  }
+};
+
+// Handles deleting a category with confirmation
+const handleDeleteCategory = async (id: string) => {
+  const confirmed = await uiStore.confirm(
+    "Delete Category?",
+    'Are you sure you want to delete this category? All associated tasks and templates will be moved to the "Other" category.'
+  );
+  if (confirmed) {
+    await storeDeleteCategory(id);
+  }
+};
+
+// --- AUTO-SELECT CATEGORY LOGIC ---
+
+// This is called when the category dropdown value changes
+const handleCategoryChange = () => {
+  if (newTemplate.value.categoryId === "_createNew") {
+    // If "-- Create New --" is selected, open the editor
+    categoryToEdit.value = null; // Ensure editor is in "create" mode
+    isCategoryEditorOpen.value = true;
+    // Reset the dropdown to the "Please select" option
+    newTemplate.value.categoryId = "";
+  }
+};
+
+// This is the new event handler that listens to the CategoryEditor
+const onCategoryCreated = (newCategory: Category) => {
+  // Automatically select the newly created category in the form's dropdown
+  newTemplate.value.categoryId = newCategory.id;
+  closeCategoryEditor(); // Close the modal
+};
+</script>
 
 <style scoped>
-.templates-page {
+/* --- STYLES ARE FIXED HERE --- */
+.template-manager-container {
+  padding: 2rem;
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
-  width: 100%;
-  max-width: var(--content-medium);
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-12);
+  gap: 3rem;
 }
-@media (max-width: 767.98px) {
-  .templates-page {
-    padding: var(--space-5) var(--space-4) var(--space-10);
-  }
+.section h2 {
+  margin-top: 0;
 }
-
-.templates-page__grid {
+.content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
+  grid-template-columns: 1fr 2fr;
+  gap: 2rem;
+  margin-top: 1rem;
 }
-@media (min-width: 1024px) {
-  .templates-page__grid {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+
+@media (max-width: 768px) {
+  .content-grid {
+    grid-template-columns: 1fr;
   }
 }
 
-.list-card :deep(.ui-card__header) {
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-}
-.list-card__count {
-  font-size: var(--fs-12);
-  color: var(--text-tertiary);
-}
-.list-card__helper {
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  color: var(--text-secondary);
-}
-.link-button {
-  margin-left: var(--space-1);
-  color: var(--accent-text);
-  font-weight: var(--fw-medium);
-  border-radius: var(--radius-xs);
-}
-.link-button:hover {
-  text-decoration: underline;
+.form-card,
+.list-card,
+.category-list-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
-.rows {
-  display: flex;
-  flex-direction: column;
+.list-card h3,
+.category-list-card h3 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
 }
-.row {
-  position: relative;
+
+/* RESTORED: Existing Templates List Styles */
+.existing-templates-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+}
+.existing-templates-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.existing-templates-list li:last-child {
+  border-bottom: none;
+}
+.template-info {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-height: 48px;
-  padding: var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  transition: background-color var(--dur-fast) var(--ease-standard);
+  gap: 0.5rem;
 }
-.row:first-child {
-  border-top: 0;
+.template-title {
+  font-weight: 500;
+  border-left: 4px solid #ccc;
+  padding-left: 8px;
 }
-.row:hover {
-  background-color: var(--bg-subtle);
+.template-details {
+  color: #666;
+  font-size: 0.9rem;
 }
-.rows:not(.rows--plain) > .row:not(.row--category):not(.row--skeleton) {
-  box-shadow: inset 3px 0 0 var(--cat);
+
+/* Category List Styles */
+.category-list-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }
-.row__main {
-  flex: 1 1 auto;
+.category-list-card li {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f0f0f0;
 }
-.row__title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-14);
-  line-height: var(--lh-14);
-  font-weight: var(--fw-medium);
-  color: var(--text-primary);
+.category-list-card li:last-child {
+  border-bottom: none;
 }
-.row__meta {
+.category-info {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  color: var(--text-secondary);
-  white-space: nowrap;
+  gap: 1rem;
 }
-.row__duration {
-  flex-shrink: 0;
+.category-color-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
 }
-.row__category {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.category-name {
+  font-weight: 500;
 }
-.row__dot,
-.row__swatch {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background-color: var(--cat);
-  flex-shrink: 0;
-}
-.row__swatch {
-  width: 10px;
-  height: 10px;
-}
-.row__badge {
-  margin-right: var(--space-2);
-}
-.row__actions {
+.category-actions {
   display: flex;
-  gap: 2px;
-  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
 }
-/* Fine pointers: actions appear on hover / keyboard focus. Touch: always visible. */
-@media (hover: hover) and (pointer: fine) {
-  .row__actions {
-    opacity: 0;
-    transition: opacity var(--dur-fast) var(--ease-standard);
-  }
-  .row:hover .row__actions,
-  .row:focus-within .row__actions {
-    opacity: 1;
-  }
+.default-tag {
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #666;
+  background-color: #e0e0e0;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+.btn-edit-small {
+  background: #f0f0f0;
+  color: #555;
+  border: 1px solid #ccc;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.btn-danger-small {
+  background: #e53e3e;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.category-actions .btn-danger,
+.existing-templates-list .btn-danger {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+}
+
+.btn-edit-small {
+  background: #f0f0f0;
+  color: #555;
+  border: 1px solid #ccc;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 4px; /* Added for consistency */
+}
+
+/* Remove old circular button style */
+.btn-danger-small {
+  display: none;
 }
 </style>

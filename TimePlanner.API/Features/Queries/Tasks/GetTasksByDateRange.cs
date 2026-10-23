@@ -25,17 +25,26 @@ public class GetTasksByDateRangeQueryHandler : IRequestHandler<GetTasksByDateRan
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
-        // The user's planner: personal tasks + organization tasks assigned to them (active memberships only),
-        // starting in the half-open range [StartDate, EndDate) of UTC instants.
-        var tasks = await _context.Tasks
+        // Query for tasks that fall within the requested range
+        var query = _context.Tasks
             .AsNoTracking()
-            .Where(PlannerScope.ForUser(_context, userId.Value))
-            .Where(t => t.Start >= request.StartDate && t.Start < request.EndDate)
-            .Select(TaskProjections.ToDto)
-            .ToListAsync(cancellationToken);
+            .Where(t => t.UserId == userId &&
+                        t.Start >= request.StartDate &&
+                        t.Start < request.EndDate.AddDays(1)) // Ensure we include the entire end day
 
-        var roles = await TaskProjections.ActiveRolesAsync(_context, userId.Value, cancellationToken);
-        TaskProjections.ApplyCapabilities(tasks, userId.Value, roles);
-        return tasks;
+            .Include(t => t.Category); // Eagerly load the related Category
+
+        return await query.Select(t => new TaskItemDto
+        {
+            Id = t.Id,
+            Title = t.Title,
+            Start = t.Start,
+            Duration = t.Duration,
+            CategoryId = t.CategoryId,
+            CategoryName = t.Category.Name,
+            CategoryColor = t.Category.Color,
+            TemplateId = t.TemplateId
+        })
+        .ToListAsync(cancellationToken);
     }
 }

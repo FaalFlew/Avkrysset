@@ -1,27 +1,18 @@
 // src/main.ts
 
-// Styles first so they precede every component stylesheet in the cascade.
-import "@fontsource-variable/inter";
-import "./styles/tokens.css";
-import "./styles/base.css";
-import "./assets/main.css"; // Legacy compat layer — removed once every screen is migrated.
-
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
-import router from "./router";
+import "./assets/main.css";
 import { setupTaskStoreSubscribers } from "./stores/taskStore";
-import { initTheme } from "./composables/useTheme";
-
-// Sync the theme singleton with what the pre-paint script in index.html already applied.
-initTheme();
+import router from "./router"; // ADDED: Import the router
 
 const app = createApp(App);
 
 app.use(createPinia());
-app.use(router);
+app.use(router); // ADDED: Tell the Vue app to use the router
 
-// Persist guest data to localStorage.
+// MODIFICATION: Call the new function to set up localStorage persistence for guests
 setupTaskStoreSubscribers();
 
 app.mount("#app");

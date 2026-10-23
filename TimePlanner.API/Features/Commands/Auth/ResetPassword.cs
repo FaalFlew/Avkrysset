@@ -18,11 +18,11 @@ public class ResetPasswordCommandValidator : AbstractValidator<ResetPasswordComm
     // ... validator code remains exactly the same ...
     public ResetPasswordCommandValidator()
     {
-        RuleFor(x => x.UserId).NotEmpty().WithMessage("The password reset link is incomplete.");
-        RuleFor(x => x.Token).NotEmpty().WithMessage("The password reset link is incomplete.");
+        RuleFor(x => x.UserId).NotEmpty();
+        RuleFor(x => x.Token).NotEmpty();
 
         // Re-use the same strong password rules from registration.
-        RuleFor(x => x.NewPassword).Cascade(CascadeMode.Stop)
+        RuleFor(x => x.NewPassword)
             .NotEmpty().WithMessage("Password is required.")
             .MinimumLength(8).WithMessage("Password must be at least 8 characters long.")
             .Matches("[A-Z]").WithMessage("Password must contain at least one uppercase letter.")

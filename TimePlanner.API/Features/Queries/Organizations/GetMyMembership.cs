@@ -4,7 +4,6 @@ using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
-using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
@@ -38,17 +37,15 @@ public class GetMyMembershipQueryHandler : IRequestHandler<GetMyMembershipQuery,
                 OrganizationName = m.Organization.Name,
                 UserId = m.UserId,
                 UserEmail = m.User.Email!,
-                DisplayName = m.User.DisplayName ?? m.User.Email!,
                 Role = m.Role,
-                Status = m.Status,
-                StatusMessage = m.StatusMessage
+                Status = m.Status
             })
             .SingleOrDefaultAsync(cancellationToken);
 
         if (membership == null)
         {
             // This is not an access violation, but a "Not Found" case. The user might have been removed.
-            throw new KeyNotFoundException(AuthorizationExtensions.OrganizationNotFoundMessage);
+            throw new KeyNotFoundException("You are not a member of this organization.");
         }
 
         return membership;

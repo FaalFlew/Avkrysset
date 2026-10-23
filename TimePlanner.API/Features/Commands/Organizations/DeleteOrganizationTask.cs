@@ -1,8 +1,6 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
-using TimePlanner.API.Exceptions;
-using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -31,8 +29,6 @@ public class DeleteOrganizationTaskCommandHandler : IRequestHandler<DeleteOrgani
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
-
         var task = await _context.Tasks
             .Include(t => t.Assignments)
             .FirstOrDefaultAsync(t => t.Id == request.TaskId && t.OrganizationId == request.OrganizationId, cancellationToken);
@@ -43,10 +39,14 @@ public class DeleteOrganizationTaskCommandHandler : IRequestHandler<DeleteOrgani
             return;
         }
 
-        // Authorization: Admins/Owners, or the member who created the task. Assignees cannot delete.
-        if (!TaskCapabilities.For(task.OrganizationId, task.UserId, currentUserId.Value, membership.Role).CanDelete)
+        // Authorization: User must be Admin/Owner OR the original creator of the task.
+        // We'll say only Admins or the creator can delete. Assignees cannot. This is a business rule choice.
+        var isCreator = task.UserId == currentUserId;
+        var isAdminOrOwner = await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken);
+
+        if (!isCreator && !isAdminOrOwner)
         {
-            throw new ForbiddenException("Only an organization admin or the task's creator can delete this task.");
+            throw new UnauthorizedAccessException("You do not have permission to delete this task.");
         }
 
         _context.Tasks.Remove(task); // This will cascade delete the assignments as configured.

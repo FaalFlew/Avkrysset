@@ -12,11 +12,6 @@ public class Organization : AuditableEntity
     public Guid OwnerId { get; set; }
     public User Owner { get; set; } = null!;
 
-    // IANA time zone id (e.g. "Europe/Oslo"). Organization analytics and reports use this calendar.
-    [Required]
-    [MaxLength(64)]
-    public string TimeZoneId { get; set; } = "UTC";
-
     [Required]
     [MaxLength(8)] // Short, easy-to-type codes
     public string MemberJoinCode { get; set; } = string.Empty;

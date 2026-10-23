@@ -2,7 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
-using TimePlanner.API.Features.Queries.Tasks;
+using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 
 namespace TimePlanner.API.Features.Queries.Users;
@@ -25,28 +25,48 @@ public class GetMyOrganizationTasksQueryHandler : IRequestHandler<GetMyOrganizat
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        // 1. Find all active organizations the user is a member of (with the user's role in each).
-        var roles = await TaskProjections.ActiveRolesAsync(_context, currentUserId.Value, cancellationToken);
+        // 1. Find all active organizations the user is a member of.
+        var myOrganizationIds = await _context.OrganizationMemberships
+            .AsNoTracking()
+            .Where(m => m.UserId == currentUserId && m.Status == MembershipStatus.Active)
+            .Select(m => m.OrganizationId)
+            .ToListAsync(cancellationToken);
 
-        if (roles.Count == 0)
+        if (!myOrganizationIds.Any())
         {
             return new List<TaskItemDto>();
         }
-
-        var myOrganizationIds = roles.Keys.ToList();
 
         // 2. Fetch all tasks within the date range that are assigned to the user
         //    AND belong to one of their active organizations.
         var tasks = await _context.Tasks
             .AsNoTracking()
             .Where(t => t.OrganizationId.HasValue && myOrganizationIds.Contains(t.OrganizationId.Value))
-            .Where(t => t.Start >= request.StartDate && t.Start < request.EndDate)
+            .Where(t => t.Start >= request.StartDate && t.Start < request.EndDate.AddDays(1))
             .Where(t => t.Assignments.Any(a => a.AssigneeId == currentUserId))
+            .Include(t => t.Category)
+            .Include(t => t.Assignments)
+                .ThenInclude(a => a.Assignee)
             .OrderBy(t => t.Start)
-            .Select(TaskProjections.ToDto)
+            .Select(t => new TaskItemDto
+            {
+                Id = t.Id,
+                Title = t.Title,
+                Start = t.Start,
+                Duration = t.Duration,
+                CategoryId = t.CategoryId,
+                CategoryName = t.Category.Name,
+                CategoryColor = t.Category.Color,
+                OrganizationId = t.OrganizationId,
+                TemplateId = t.TemplateId,
+                Assignees = t.Assignments.Select(a => new TaskAssigneeDto
+                {
+                    UserId = a.AssigneeId,
+                    UserEmail = a.Assignee.Email!
+                }).ToList()
+            })
             .ToListAsync(cancellationToken);
 
-        TaskProjections.ApplyCapabilities(tasks, currentUserId.Value, roles);
         return tasks;
     }
 }

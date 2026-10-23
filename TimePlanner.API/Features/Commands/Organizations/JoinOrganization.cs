@@ -129,10 +129,7 @@ public class JoinOrganizationCommandHandler : IRequestHandler<JoinOrganizationCo
         // or would need another DB query. For now, let's assume we can get it.
         // This is a good place to demonstrate a potential N+1 problem if not handled carefully.
         // For now, we'll leave it as a placeholder.
-        var user = _context.Users
-            .Where(u => u.Id == membership.UserId)
-            .Select(u => new { u.Email, u.DisplayName })
-            .FirstOrDefault();
+        var userEmail = _context.Users.Where(u => u.Id == membership.UserId).Select(u => u.Email).FirstOrDefault();
 
         return new OrganizationMembershipDto
         {
@@ -140,11 +137,9 @@ public class JoinOrganizationCommandHandler : IRequestHandler<JoinOrganizationCo
             OrganizationId = membership.OrganizationId,
             OrganizationName = organizationName,
             UserId = membership.UserId,
-            UserEmail = user?.Email ?? "N/A",
-            DisplayName = user?.DisplayName ?? user?.Email ?? "N/A",
+            UserEmail = userEmail ?? "N/A",
             Role = membership.Role,
-            Status = membership.Status,
-            StatusMessage = membership.StatusMessage
+            Status = membership.Status
         };
     }
 }

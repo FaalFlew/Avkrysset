@@ -1,79 +1,126 @@
-// src/composables/useTasks.ts — thin view-model over the task and UI stores.
+// src/composables/useTasks.ts
 
-import { computed } from "vue";
+import { ref, computed, watchEffect } from "vue";
+import { useTaskStore } from "@/stores/taskStore";
 import { storeToRefs } from "pinia";
-import { useTaskStore, type AddTaskOptions, type NewTaskData, type UpdateTaskOptions } from "@/stores/taskStore";
-import { useUIStore } from "@/stores/uiStore";
-import type { Task, TaskTemplate, Category } from "@/types";
-import { addDays, isInRange, todayKey, weekDaysOf, weekRange, type DateKey } from "@/lib/datetime";
+import dayjs, { Dayjs } from "dayjs";
+import weekOfYear from "dayjs/plugin/weekOfYear";
+import isoWeek from "dayjs/plugin/isoWeek";
+import isBetween from "dayjs/plugin/isBetween";
+import { Task, TaskTemplate, Category } from "@/types"; // ADDED Types for clarity
+import { useAuthStore } from "@/stores/authStore"; // ADDED
+import { useUIStore } from "@/stores/uiStore"; // ADDED: Import uiStore
+
+dayjs.extend(weekOfYear);
+dayjs.extend(isoWeek);
+dayjs.extend(isBetween);
+// Define the format here to ensure consistency
+const DATE_FORMAT = "YYYY-MM-DD HH:mm:ss";
 
 export function useTasks() {
   const uiStore = useUIStore();
   const store = useTaskStore();
+  const authStore = useAuthStore(); // ADDED: Get a reference to the auth store
   const otherCategoryId = computed(() => store.otherCategory?.id);
 
   const { tasks, templates, categories } = storeToRefs(store);
 
-  /** Selected calendar date (DateKey, `YYYY-MM-DD`); the planner shows its ISO week. */
   const { currentDate } = storeToRefs(uiStore);
   const otherCategory = computed(() => store.otherCategory);
 
-  /** The 7 DateKeys (Monday..Sunday) of the selected week. */
-  const currentWeek = computed(() => weekDaysOf(currentDate.value));
+  const currentDateAsDayjs = computed(() => dayjs(currentDate.value));
 
-  /** Half-open instant range of the selected week in the user's zone. */
-  const currentWeekRange = computed(() => weekRange(currentDate.value));
+  const currentWeek = computed(() => {
+    const startOfWeek = currentDateAsDayjs.value.startOf("isoWeek");
+    return Array.from({ length: 7 }, (_, i) => startOfWeek.add(i, "day"));
+  });
+  /*
+  // --- ADDED: The core fix is this watchEffect ---
+  watch(async () => {
+    // This function will re-run automatically whenever currentWeek changes.
 
-  // Works for both guests (all local tasks) and authenticated users (the fetched week).
-  const tasksForCurrentWeek = computed(() =>
-    tasks.value.filter((task) => isInRange(task.start, currentWeekRange.value))
-  );
+    // 1. Check if the user is logged in. Guests don't need to fetch.
+    if (authStore.isAuthenticated) {
+      const week = currentWeek.value;
+      if (!week || week.length === 0) return; // Add a guard for initial state
 
+      const startDate = week[0].startOf("day").toISOString();
+      const endDate = week[6].endOf("day").toISOString();
+
+      // 2. Trigger the action in the store to fetch tasks from the API.
+      await store.fetchTasksForRange(startDate, endDate);
+    }
+  });*/
+
+  // This computed property now correctly works for both guests (filtering local data)
+  // and authenticated users (filtering the freshly fetched API data).
+  const tasksForCurrentWeek = computed(() => {
+    const start = currentWeek.value[0].startOf("day");
+    const end = currentWeek.value[6].endOf("day");
+    return tasks.value.filter((task) =>
+      dayjs(task.start).isBetween(start, end, null, "[]")
+    );
+  });
+
+  // --- MODIFICATION: Update navigation functions to mutate the store ---
   const nextWeek = () => {
-    currentDate.value = addDays(currentDate.value, 7);
+    // Mutate the string in the store
+    currentDate.value = currentDateAsDayjs.value.add(1, "week").toISOString();
   };
 
   const previousWeek = () => {
-    currentDate.value = addDays(currentDate.value, -7);
-  };
-
-  const nextDay = () => {
-    currentDate.value = addDays(currentDate.value, 1);
-  };
-
-  const previousDay = () => {
-    currentDate.value = addDays(currentDate.value, -1);
-  };
-
-  const selectDate = (day: DateKey) => {
-    currentDate.value = day;
+    // Mutate the string in the store
+    currentDate.value = currentDateAsDayjs.value
+      .subtract(1, "week")
+      .toISOString();
   };
 
   const goToToday = () => {
-    currentDate.value = todayKey();
+    // Mutate the string in the store
+    currentDate.value = dayjs().toISOString();
   };
 
   const getCategory = (id: string) => store.getCategoryById(id);
 
-  const addTask = (task: NewTaskData, options?: AddTaskOptions): Promise<Task | null> =>
-    store.addTask(task, options);
+  //
+  const addTask = async (
+    task: Omit<Task, "id" | "categoryName" | "categoryColor">
+  ): Promise<boolean> => {
+    return await store.addTask(task);
+  };
 
-  const updateTask = (task: Task, options: boolean | UpdateTaskOptions = {}): Promise<boolean> =>
-    store.updateTask(task, options);
+  const updateTask = async (
+    task: Task,
+    silent: boolean = false
+  ): Promise<boolean> => {
+    return await store.updateTask(task, silent);
+  };
 
-  /** Optimistic delete with an "Undo" toast. */
-  const deleteTask = (id: string): Promise<boolean> => store.deleteTask(id);
+  const deleteTask = async (id: string) => await store.deleteTask(id);
 
-  const addCategory = (category: Omit<Category, "id">): Promise<Category | null> =>
-    store.addCategory(category);
-  const updateCategory = (category: Category): Promise<boolean> => store.updateCategory(category);
-  const deleteCategory = (id: string): Promise<boolean> => store.deleteCategory(id);
+  // ... other actions updated similarly to be async ...
+  const addCategory = async (
+    category: Omit<Category, "id">
+  ): Promise<Category | null> => {
+    return await store.addCategory(category);
+  };
+  const updateCategory = async (category: Category) =>
+    await store.updateCategory(category);
+  const deleteCategory = async (id: string) => await store.deleteCategory(id);
 
-  const addTemplate = (
+  //
+
+  const addTemplate = async (
     template: Omit<TaskTemplate, "id" | "categoryName" | "categoryColor">
-  ): Promise<TaskTemplate | null> => store.addTemplate(template);
-  const deleteTemplate = (id: string): Promise<boolean> => store.deleteTemplate(id);
-  const updateTemplate = (template: TaskTemplate): Promise<boolean> => store.updateTemplate(template);
+  ) => {
+    await store.addTemplate(template);
+  };
+  const deleteTemplate = async (id: string) => {
+    await store.deleteTemplate(id);
+  };
+  const updateTemplate = async (template: TaskTemplate) => {
+    await store.updateTemplate(template);
+  };
 
   return {
     // State
@@ -81,18 +128,14 @@ export function useTasks() {
     templates,
     categories,
     currentWeek,
-    currentWeekRange,
     tasksForCurrentWeek,
     otherCategory,
-    currentDate,
+    currentDate: currentDateAsDayjs,
     otherCategoryId,
 
     // Actions
     nextWeek,
     previousWeek,
-    nextDay,
-    previousDay,
-    selectDate,
     goToToday,
     getCategory,
     addTask,

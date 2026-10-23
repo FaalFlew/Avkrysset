@@ -6,7 +6,6 @@ using System.ComponentModel.DataAnnotations;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Services;
-using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Commands.Organizations;
 
@@ -45,10 +44,13 @@ public class UpdateMyMembershipSettingsCommandHandler : IRequestHandler<UpdateMy
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        // Only active members (others get 404 "Organization not found.").
-        var activeMembership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
         var membership = await _context.OrganizationMemberships
-            .SingleAsync(m => m.Id == activeMembership.Id, cancellationToken);
+            .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId, cancellationToken);
+
+        if (membership == null)
+        {
+            throw new KeyNotFoundException("You are not a member of this organization.");
+        }
 
         membership.StatusMessage = request.StatusMessage;
         await _context.SaveChangesAsync(cancellationToken);
@@ -62,7 +64,6 @@ public class UpdateMyMembershipSettingsCommandHandler : IRequestHandler<UpdateMy
             OrganizationName = m.Organization.Name,
             UserId = m.UserId,
             UserEmail = m.User.Email!,
-            DisplayName = m.User.DisplayName ?? m.User.Email!,
             Role = m.Role,
             Status = m.Status,
             StatusMessage = m.StatusMessage // Include the newly updated message

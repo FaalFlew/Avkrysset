@@ -1,4 +1,3 @@
-using FluentValidation;
 using MediatR;
 using System.Security.Cryptography;
 using TimePlanner.API.Data;
@@ -10,14 +9,6 @@ namespace TimePlanner.API.Features.Commands.Organizations;
 
 // We return the OrganizationDto so the owner can immediately see the new codes.
 public record RegenerateJoinCodesCommand(Guid OrganizationId, int ExpiryDays = 7) : IRequest<OrganizationDto>;
-
-public class RegenerateJoinCodesCommandValidator : AbstractValidator<RegenerateJoinCodesCommand>
-{
-    public RegenerateJoinCodesCommandValidator()
-    {
-        RuleFor(x => x.ExpiryDays).InclusiveBetween(1, 365).WithMessage("Join codes can be valid for 1 to 365 days.");
-    }
-}
 
 public class RegenerateJoinCodesCommandHandler : IRequestHandler<RegenerateJoinCodesCommand, OrganizationDto>
 {
@@ -36,7 +27,10 @@ public class RegenerateJoinCodesCommandHandler : IRequestHandler<RegenerateJoinC
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Only the owner can regenerate codes.
-        await _context.RequireOwner(currentUserId.Value, request.OrganizationId, "Only the organization owner can regenerate join codes.", cancellationToken);
+        if (!await _context.IsOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("Only the organization owner can regenerate join codes.");
+        }
 
         var organization = await _context.Organizations.FindAsync(new object[] { request.OrganizationId }, cancellationToken);
         if (organization == null) throw new KeyNotFoundException("Organization not found.");
@@ -53,7 +47,6 @@ public class RegenerateJoinCodesCommandHandler : IRequestHandler<RegenerateJoinC
             Id = organization.Id,
             Name = organization.Name,
             OwnerId = organization.OwnerId,
-            TimeZoneId = organization.TimeZoneId,
             MemberJoinCode = organization.MemberJoinCode,
             MemberJoinCodeExpiryUtc = organization.MemberJoinCodeExpiryUtc,
             AdminJoinCode = organization.AdminJoinCode,

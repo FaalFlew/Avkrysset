@@ -51,7 +51,10 @@ public class UpdateIssueCommandHandler : IRequestHandler<UpdateIssueCommand>
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be Admin or Owner.
-        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to edit issues in this organization.", cancellationToken);
+        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You do not have permission to edit issues in this organization.");
+        }
 
         var issue = await _context.Issues
             .FirstOrDefaultAsync(i => i.Id == request.IssueId && i.OrganizationId == request.OrganizationId, cancellationToken);
@@ -70,7 +73,7 @@ public class UpdateIssueCommandHandler : IRequestHandler<UpdateIssueCommand>
 
         if (issue.ConvertedToTaskItemId.HasValue)
         {
-            throw new ConflictException("Cannot edit an issue that has already been converted to a task.");
+            throw new InvalidOperationException("Cannot edit an issue that has already been converted to a task.");
         }
 
         // Validate the category belongs to the current user (the editor)

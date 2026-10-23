@@ -9,8 +9,7 @@ using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Commands.Organizations;
 
-// TimeZoneId: new IANA zone for the organization's calendar, or null to keep the current one.
-public record UpdateOrganizationCommand(Guid OrganizationId, string Name, string? TimeZoneId = null) : IRequest;
+public record UpdateOrganizationCommand(Guid OrganizationId, string Name) : IRequest;
 
 public class UpdateOrganizationCommandValidator : AbstractValidator<UpdateOrganizationCommand>
 {
@@ -18,9 +17,6 @@ public class UpdateOrganizationCommandValidator : AbstractValidator<UpdateOrgani
     {
         RuleFor(x => x.OrganizationId).NotEmpty();
         RuleFor(x => x.Name).NotEmpty().MaximumLength(150);
-        RuleFor(x => x.TimeZoneId)
-            .Must(ClientTimeZone.IsKnown).WithMessage(OrganizationTimeZoneRules.UnknownTimeZone)
-            .When(x => x.TimeZoneId is not null);
     }
 }
 
@@ -45,7 +41,10 @@ public class UpdateOrganizationCommandHandler : IRequestHandler<UpdateOrganizati
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be an Admin or Owner.
-        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to edit this organization's settings.", cancellationToken);
+        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You do not have permission to edit this organization's settings.");
+        }
 
         var organization = await _context.Organizations
             .FirstOrDefaultAsync(o => o.Id == request.OrganizationId, cancellationToken);
@@ -64,10 +63,6 @@ public class UpdateOrganizationCommandHandler : IRequestHandler<UpdateOrganizati
         }
 
         organization.Name = request.Name;
-        if (request.TimeZoneId is not null)
-        {
-            organization.TimeZoneId = request.TimeZoneId;
-        }
         // The UpdatedOnUtc/UpdatedByUserId will be set by the DbContext's SaveChangesAsync override.
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -75,8 +70,7 @@ public class UpdateOrganizationCommandHandler : IRequestHandler<UpdateOrganizati
         {
             Id = organization.Id,
             Name = organization.Name,
-            OwnerId = organization.OwnerId,
-            TimeZoneId = organization.TimeZoneId
+            OwnerId = organization.OwnerId
         };
         await _notificationService.OrganizationUpdated(request.OrganizationId, orgDto);
     }

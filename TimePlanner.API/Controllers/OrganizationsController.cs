@@ -3,11 +3,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TimePlanner.API.DTOs;
 using TimePlanner.API.DTOs.Organizations;
-using TimePlanner.API.Exceptions;
 using TimePlanner.API.Features.Commands.Organizations;
 using TimePlanner.API.Features.Queries.Organizations;
 using TimePlanner.API.Features.Queries.Users;
-using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Controllers;
 
@@ -29,14 +27,6 @@ public class OrganizationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreateOrganization(CreateOrganizationCommand command)
     {
-        // Without an explicit timeZoneId the organization uses the creator's zone (X-Time-Zone header);
-        // a missing or unknown header gives UTC. An explicit but unknown timeZoneId is rejected (400).
-        if (string.IsNullOrWhiteSpace(command.TimeZoneId))
-        {
-            var headerZone = ClientTimeZone.GetId(Request);
-            command = command with { TimeZoneId = ClientTimeZone.IsKnown(headerZone) ? headerZone : "UTC" };
-        }
-
         var result = await _mediator.Send(command);
         // Returns a 201 Created status with a Location header pointing to where the new resource can be fetched.
         // We will create the "GetOrganizationById" endpoint later.
@@ -101,7 +91,7 @@ public class OrganizationsController : ControllerBase
         // Ensure the route parameters match the command parameters for consistency.
         if (organizationId != command.OrganizationId || userId != command.UserId)
         {
-            throw new BadRequestException("Route parameters must match the request body.");
+            return BadRequest("Route parameters must match the request body.");
         }
 
         await _mediator.Send(command);
@@ -117,7 +107,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         var result = await _mediator.Send(command);
@@ -134,7 +124,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         var result = await _mediator.Send(command);
@@ -158,7 +148,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         var result = await _mediator.Send(command);
@@ -175,7 +165,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || panelId != command.PanelId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
 
         var result = await _mediator.Send(command);
@@ -262,7 +252,7 @@ public class OrganizationsController : ControllerBase
         // Ensure route parameters match the command body for consistency and security.
         if (organizationId != command.OrganizationId || issueId != command.IssueId)
         {
-            throw new BadRequestException("Route parameters must match the request body.");
+            return BadRequest("Route parameters must match the request body.");
         }
 
         var result = await _mediator.Send(command);
@@ -280,7 +270,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -295,7 +285,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         var result = await _mediator.Send(command);
@@ -324,7 +314,7 @@ public class OrganizationsController : ControllerBase
     {
         if (startDate >= endDate)
         {
-            throw new BadRequestException("The start date must be before the end date.");
+            return BadRequest("The start date must be before the end date.");
         }
 
         var query = new GetOrganizationAnalyticsQuery(organizationId, startDate, endDate);
@@ -353,7 +343,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || taskId != command.TaskId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -382,7 +372,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || panelId != command.PanelId || issueId != command.IssueId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -412,7 +402,7 @@ public class OrganizationsController : ControllerBase
     {
         if (startDate >= endDate)
         {
-            throw new BadRequestException("The start date must be before the end date.");
+            return BadRequest("The start date must be before the end date.");
         }
 
         var query = new GetOrganizationTasksQuery(organizationId, startDate, endDate, memberId);
@@ -452,7 +442,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || taskId != command.TaskId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -472,7 +462,7 @@ public class OrganizationsController : ControllerBase
     {
         if (startDate >= endDate)
         {
-            throw new BadRequestException("The start date must be before the end date.");
+            return BadRequest("The start date must be before the end date.");
         }
 
         var query = new GetMemberAnalyticsQuery(organizationId, memberId, startDate, endDate);
@@ -490,7 +480,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || panelId != command.PanelId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
         await _mediator.Send(command);
         return NoContent();
@@ -517,7 +507,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -545,7 +535,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId || issueId != command.IssueId)
         {
-            throw new BadRequestException("Route parameters must match the command body.");
+            return BadRequest("Route parameters must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -582,7 +572,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         await _mediator.Send(command);
@@ -597,7 +587,7 @@ public class OrganizationsController : ControllerBase
     {
         if (organizationId != command.OrganizationId)
         {
-            throw new BadRequestException("Route parameter 'organizationId' must match the command body.");
+            return BadRequest("Route parameter 'organizationId' must match the command body.");
         }
 
         var result = await _mediator.Send(command);

@@ -1,10 +1,8 @@
+<!-- NEW FILE: src/views/CheckEmailView.vue -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { useAuthStore } from "@/stores/authStore";
 import { useRouter, RouterLink } from "vue-router";
-import { Mail } from "lucide-vue-next";
-import AuthLayout from "@/components/auth/AuthLayout.vue";
-import UiButton from "@/components/ui/UiButton.vue";
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -24,36 +22,54 @@ async function resendEmail() {
 </script>
 
 <template>
-  <AuthLayout title="Confirm your email" tone="accent" centered>
-    <template #icon><Mail :size="20" /></template>
-    <p v-if="email" class="auth-text">
-      We sent a confirmation link to <strong>{{ email }}</strong>. Click it to activate your account.
+  <div class="auth-container check-email-container">
+    <h2>Please Confirm Your Email</h2>
+    <p class="icon">📧</p>
+    <p v-if="email">
+      We've sent a confirmation link to <strong>{{ email }}</strong
+      >.
     </p>
-    <p v-else class="auth-text">We sent you a confirmation link. Click it to activate your account.</p>
+    <p>Please click the link in the email to complete your registration.</p>
 
-    <div class="auth-section">
-      <p class="auth-text">Didn't get it?</p>
-      <div class="auth-actions auth-actions--tight">
-        <UiButton
-          variant="secondary"
-          size="lg"
-          block
-          :loading="authStore.authStatus === 'loading'"
-          @click="resendEmail"
-        >
-          {{ authStore.authStatus === "loading" ? "Sending…" : "Resend email" }}
-        </UiButton>
-      </div>
+    <div class="resend-section">
+      <p>Didn't receive the email?</p>
+      <button
+        @click="resendEmail"
+        class="btn-secondary"
+        :disabled="authStore.authStatus === 'loading'"
+      >
+        {{
+          authStore.authStatus === "loading"
+            ? "Sending..."
+            : "Resend Confirmation Link"
+        }}
+      </button>
     </div>
 
-    <template #footer>
-      <p><RouterLink to="/login">Back to log in</RouterLink></p>
-    </template>
-  </AuthLayout>
+    <p class="back-link">
+      <RouterLink to="/login">Back to Login</RouterLink>
+    </p>
+  </div>
 </template>
 
 <style scoped>
-.auth-actions.auth-actions--tight {
-  margin-top: var(--space-3);
+@import "@/assets/authFormStyle";
+
+.check-email-container .icon {
+  font-size: 4rem;
+  margin: 1rem 0 2rem 0;
+}
+.resend-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e0e0e0;
+}
+.resend-section p {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+.back-link {
+  margin-top: 2rem;
+  font-size: 0.9rem;
 }
 </style>

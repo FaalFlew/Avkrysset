@@ -2,7 +2,6 @@ using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
-using TimePlanner.API.Features.Commands.Tasks;
 using TimePlanner.API.Services;
 
 namespace TimePlanner.API.Features.Commands.TaskTemplates;
@@ -13,14 +12,10 @@ public class UpdateTaskTemplateCommandValidator : AbstractValidator<UpdateTaskTe
 {
     public UpdateTaskTemplateCommandValidator()
     {
-        RuleFor(x => x.Id).NotEmpty().WithMessage("Template id is required.");
-        RuleFor(x => x.Title)
-            .NotEmpty().WithMessage("Template title is required.")
-            .MaximumLength(200).WithMessage("Template title can be at most 200 characters.");
-        RuleFor(x => x.Duration)
-            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
-            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
-        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
+        RuleFor(x => x.Id).NotEmpty();
+        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.Duration).GreaterThan(0);
+        RuleFor(x => x.CategoryId).NotEmpty();
     }
 }
 

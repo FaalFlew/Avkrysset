@@ -32,7 +32,10 @@ public class RemoveMemberCommandHandler : IRequestHandler<RemoveMemberCommand>
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization Check: Current user must be Admin or Owner.
-        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to remove members from this organization.", cancellationToken);
+        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You do not have permission to remove members from this organization.");
+        }
 
         var membershipToRemove = await _context.OrganizationMemberships
             .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == request.UserId, cancellationToken);
@@ -46,7 +49,7 @@ public class RemoveMemberCommandHandler : IRequestHandler<RemoveMemberCommand>
         // Business Rule: The Owner cannot be removed.
         if (membershipToRemove.Role == OrganizationRoles.Owner)
         {
-            throw new ConflictException("The organization owner cannot be removed. Transfer ownership first.");
+            throw new InvalidOperationException("The organization owner cannot be removed. Transfer ownership first.");
         }
 
         // --- Soft Leave vs. Hard Delete Logic ---

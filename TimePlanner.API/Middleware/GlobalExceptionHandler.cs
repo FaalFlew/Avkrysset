@@ -55,11 +55,9 @@ public class GlobalExceptionHandler
             // This handles FluentValidation exceptions.
             case ValidationException ex:
                 statusCode = (int)HttpStatusCode.BadRequest; // 400
+                message = "One or more validation errors occurred.";
                 // The 'Errors' property in FluentValidation's exception contains the details.
-                errors.AddRange(ex.Errors.Select(e => e.ErrorMessage).Distinct());
-                // Handlers throw ValidationException("...") with a readable message and no Errors;
-                // the client shows "message" to the user, so prefer the real reason over a generic text.
-                message = errors.Count > 0 ? string.Join(" ", errors) : ex.Message;
+                errors.AddRange(ex.Errors.Select(e => e.ErrorMessage));
                 _logger.LogInformation("Validaton Business rule: {Message}", ex.Message);
 
                 break;
@@ -71,12 +69,6 @@ public class GlobalExceptionHandler
 
                 break;
 
-            case ForbiddenException ex:
-                statusCode = (int)HttpStatusCode.Forbidden; // 403: signed in, but not allowed
-                message = ex.Message;
-                _logger.LogInformation("Forbidden: {Message}", ex.Message);
-                break;
-
             case UnauthorizedAccessException ex:
             statusCode = (int)HttpStatusCode.Unauthorized; // 401
             message = ex.Message;
@@ -86,7 +78,6 @@ public class GlobalExceptionHandler
             case BadRequestException ex:
             statusCode = (int)HttpStatusCode.BadRequest; // 400
             message = ex.Message;
-            errors.AddRange(ex.Errors);
             _logger.LogWarning("Bad Request: {Message}", ex.Message);
             break;
 

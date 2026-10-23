@@ -27,17 +27,19 @@ public class GetSelectableMembersQueryHandler : IRequestHandler<GetSelectableMem
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Only Admins/Owners need this list to assign tasks.
-        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to view the member list.", cancellationToken);
+        if (!await _context.IsAdminOrOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("You do not have permission to view the member list.");
+        }
 
         var members = await _context.OrganizationMemberships
             .AsNoTracking()
             .Where(m => m.OrganizationId == request.OrganizationId && m.Status == MembershipStatus.Active)
-            .OrderBy(m => m.User.DisplayName ?? m.User.Email)
+            .OrderBy(m => m.User.Email)
             .Select(m => new SelectableMemberDto
             {
                 UserId = m.UserId,
-                UserEmail = m.User.Email!,
-                DisplayName = m.User.DisplayName ?? m.User.Email!
+                UserEmail = m.User.Email!
             })
             .ToListAsync(cancellationToken);
 

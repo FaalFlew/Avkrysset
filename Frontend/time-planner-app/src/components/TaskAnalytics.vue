@@ -1,322 +1,441 @@
-<!-- src/components/TaskAnalytics.vue — the /analytics page body (rendered inside the app shell). -->
-<script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { CalendarRange, ChartColumn } from "lucide-vue-next";
-import { UiButton, UiEmptyState, UiErrorState, UiPageHeader } from "@/components/ui";
-import { useStats, type AnalyticsView } from "@/composables/useStats";
-import {
-  analyticsBuckets,
-  defaultAnalyticsPeriod,
-  defaultDailyWeek,
-  type AnalyticsSelection,
-} from "@/lib/analyticsBuckets";
-import { dateKeyParts, isoWeekOf, isoWeeksInYear, todayKey } from "@/lib/datetime";
-import { useToday } from "@/composables/useClock";
-import { formatHours } from "@/lib/format";
-import AnalyticsFilters from "./analytics/AnalyticsFilters.vue";
-import KpiTiles from "./analytics/KpiTiles.vue";
-import HoursBarChart from "./analytics/HoursBarChart.vue";
-import CategoryDonut from "./analytics/CategoryDonut.vue";
-import TemplateBreakdown from "./analytics/TemplateBreakdown.vue";
-import { selectionShortLabel, selectionSummary } from "./analytics/format";
-
-const { availableYears, availableIsoYears, useFilteredStats } = useStats();
-const today = useToday();
-
-// --- Filters ------------------------------------------------------------------------------
-// The Month view counts calendar years; the Week and Day views count ISO week-years, which
-// differ around New Year (2027-01-01 is in 2026-W53, 2024-12-30 in 2025-W01). Each numbering
-// starts from its own current year (or the newest year with data).
-const defaults = defaultAnalyticsPeriod(todayKey(), availableYears.value, availableIsoYears.value);
-const calendarYear = ref(defaults.calendarYear);
-const isoYear = ref(defaults.isoYear);
-const selectedView = ref<AnalyticsView>("monthly");
-const usesIsoYear = computed(() => selectedView.value !== "monthly");
-
-/** The year the current view shows; picking a year applies it to both numberings. */
-const selectedYear = computed<number>({
-  get: () => (usesIsoYear.value ? isoYear.value : calendarYear.value),
-  set: (year) => {
-    calendarYear.value = year;
-    isoYear.value = year;
-  },
-});
-
-/** Number of ISO weeks (52 or 53) in the selected ISO week-year. */
-const weeksInSelectedYear = computed(() => isoWeeksInYear(isoYear.value));
-
-const dailyWeek = ref(defaults.dailyWeek);
-const monthRange = ref({ start: 0, end: 11 });
-const weekRange = ref({ start: 1, end: weeksInSelectedYear.value });
-
-// Keep week selections valid when the year changes (2026 has 53 ISO weeks, 2027 has 52);
-// a range that ended on the last week keeps ending on the last week.
-watch(weeksInSelectedYear, (weeks, previousWeeks) => {
-  const range = weekRange.value;
-  const end = range.end === previousWeeks ? weeks : Math.min(range.end, weeks);
-  const start = Math.min(range.start, end);
-  if (end !== range.end || start !== range.start) weekRange.value = { start, end };
-  if (dailyWeek.value > weeks) dailyWeek.value = weeks;
-});
-
-/** Calendar years (Month) or ISO week-years (Week, Day) with data, plus the current one. */
-const yearOptions = computed(() => {
-  const years = usesIsoYear.value
-    ? [...availableIsoYears.value, isoYear.value, isoWeekOf(today.value).isoYear]
-    : [...availableYears.value, calendarYear.value, dateKeyParts(today.value).year];
-  return [...new Set(years)].sort((a, b) => b - a);
-});
-
-const isFullYear = computed(() =>
-  selectedView.value === "monthly"
-    ? monthRange.value.start === 0 && monthRange.value.end === 11
-    : selectedView.value === "weekly"
-      ? weekRange.value.start === 1 && weekRange.value.end === weeksInSelectedYear.value
-      : false
-);
-
-const canReset = computed(() =>
-  selectedView.value === "daily"
-    ? dailyWeek.value !== defaultDailyWeek(today.value, isoYear.value)
-    : !isFullYear.value
-);
-
-function resetRange(): void {
-  if (selectedView.value === "monthly") monthRange.value = { start: 0, end: 11 };
-  else if (selectedView.value === "weekly") weekRange.value = { start: 1, end: weeksInSelectedYear.value };
-  else dailyWeek.value = defaultDailyWeek(today.value, isoYear.value);
-}
-
-/** Empty-range action: widen to the whole selected year. */
-function showWholeYear(): void {
-  if (selectedView.value === "daily") selectedView.value = "weekly";
-  if (selectedView.value === "monthly") monthRange.value = { start: 0, end: 11 };
-  else weekRange.value = { start: 1, end: weeksInSelectedYear.value };
-}
-
-// --- Data ---------------------------------------------------------------------------------
-const stats = useFilteredStats({
-  year: selectedYear,
-  view: selectedView,
-  monthRange,
-  weekRange,
-  dailyWeek,
-});
-const { snapshot, isLoading, isRefetching, error, hasAnyData } = stats;
-
-const currentSelection = computed<AnalyticsSelection>(() => ({
-  view: selectedView.value,
-  year: selectedYear.value,
-  monthRange: { ...monthRange.value },
-  weekRange: { ...weekRange.value },
-  dailyWeek: dailyWeek.value,
-}));
-
-const subtitle = computed(() =>
-  selectionSummary(currentSelection.value, analyticsBuckets(currentSelection.value).length)
-);
-
-/** Labels describe the data on screen (which lags the filters while refetching). */
-const shownSelection = computed(() => snapshot.value?.selection ?? currentSelection.value);
-const scopeLabel = computed(() => selectionShortLabel(shownSelection.value));
-
-type PageState = "error" | "loading" | "first-run" | "empty" | "ready";
-const state = computed<PageState>(() => {
-  if (error.value) return "error";
-  if (isLoading.value || !snapshot.value) return "loading";
-  if (!hasAnyData.value) return "first-run";
-  if (snapshot.value.totalHours <= 0) return "empty";
-  return "ready";
-});
-
-const retrying = computed(() => isLoading.value || isRefetching.value);
-
-const liveMessage = computed(() => {
-  switch (state.value) {
-    case "loading":
-      return "Loading analytics";
-    case "empty":
-      return "No time planned in this period";
-    case "ready":
-      return isRefetching.value
-        ? "Updating analytics"
-        : `${formatHours(snapshot.value?.totalHours ?? 0)} planned, ${scopeLabel.value}`;
-    default:
-      return "";
-  }
-});
-</script>
-
+<!-- src/components/TaskAnalytics.vue -->
 <template>
-  <div class="analytics-page">
-    <UiPageHeader title="Analytics" :subtitle="subtitle">
-      <AnalyticsFilters
-        v-model:view="selectedView"
-        v-model:year="selectedYear"
-        v-model:month-range="monthRange"
-        v-model:week-range="weekRange"
-        v-model:daily-week="dailyWeek"
-        :years="yearOptions"
-        :can-reset="canReset"
-        @reset="resetRange"
-      />
-    </UiPageHeader>
-
-    <p class="sr-only" role="status" aria-live="polite">{{ liveMessage }}</p>
-
-    <div class="analytics-body" :aria-busy="state === 'loading' || isRefetching || undefined">
-      <Transition name="analytics-fade" mode="out-in">
-        <div v-if="state === 'error'" key="error" class="state-panel">
-          <UiErrorState
-            title="Couldn't load analytics"
-            description="Check your connection and try again. If the server was asleep, it can take a few seconds to wake up."
-            :retrying="retrying"
-            @retry="stats.refetch()"
-          />
+  <div v-if="isLoading" class="loading-overlay">
+    <p>Loading Analytics...</p>
+  </div>
+  <div v-else class="analytics-container">
+    <h2>Analytics & Insights</h2>
+    <div class="stats-grid">
+      <!-- Filters Card -->
+      <div class="stat-card filters-card">
+        <h3>Filters</h3>
+        <div class="form-group">
+          <label for="year-select">Year</label>
+          <select id="year-select" v-model="selectedYear">
+            <option v-for="year in availableYears" :key="year" :value="year">
+              {{ year }}
+            </option>
+          </select>
         </div>
-
-        <div v-else-if="state === 'first-run'" key="first-run" class="state-panel">
-          <UiEmptyState
-            :icon="ChartColumn"
-            title="See where your time goes"
-            description="Once you've planned a few tasks, you'll see totals by category, template and period here."
-          >
-            <template #actions>
-              <UiButton variant="primary" to="/">Plan your week</UiButton>
-            </template>
-          </UiEmptyState>
-        </div>
-
-        <div
-          v-else-if="state === 'empty'"
-          key="empty"
-          class="state-panel"
-          :class="{ 'is-refetching': isRefetching }"
-        >
-          <UiEmptyState
-            :icon="CalendarRange"
-            title="No time planned in this period"
-            description="Try a wider range, or plan a few tasks and come back."
-          >
-            <template #actions>
-              <UiButton v-if="!isFullYear" variant="secondary" @click="showWholeYear">
-                Show all of {{ selectedYear }}
-              </UiButton>
-              <UiButton variant="ghost" to="/">Open planner</UiButton>
-            </template>
-          </UiEmptyState>
-        </div>
-
-        <div
-          v-else
-          key="content"
-          class="analytics-content"
-          :class="{ 'is-refetching': isRefetching }"
-        >
-          <KpiTiles :snapshot="snapshot" :scope-label="scopeLabel" :loading="state === 'loading'" />
-
-          <div class="charts-row">
-            <HoursBarChart
-              :periods="snapshot?.periods ?? []"
-              :view="shownSelection.view"
-              :total-hours="snapshot?.totalHours ?? 0"
-              :scope-label="scopeLabel"
-              :sparse="snapshot?.sparse ?? false"
-              :loading="state === 'loading'"
-              :refetching="isRefetching"
-            />
-            <CategoryDonut
-              :categories="snapshot?.categories ?? []"
-              :total-hours="snapshot?.totalHours ?? 0"
-              :scope-label="scopeLabel"
-              :loading="state === 'loading'"
-              :refetching="isRefetching"
-            />
+        <div class="form-group">
+          <label>View Type</label>
+          <div class="btn-group">
+            <button
+              @click="selectedView = 'monthly'"
+              :class="{ active: selectedView === 'monthly' }"
+            >
+              Monthly
+            </button>
+            <button
+              @click="selectedView = 'weekly'"
+              :class="{ active: selectedView === 'weekly' }"
+            >
+              Weekly
+            </button>
+            <button
+              @click="selectedView = 'daily'"
+              :class="{ active: selectedView === 'daily' }"
+            >
+              Daily
+            </button>
           </div>
-
-          <TemplateBreakdown
-            :templates="snapshot?.templates ?? []"
-            :untemplated-hours="snapshot?.untemplatedHours ?? 0"
-            :total-hours="snapshot?.totalHours ?? 0"
-            :scope-label="scopeLabel"
-            :loading="state === 'loading'"
-            :refetching="isRefetching"
-          />
         </div>
-      </Transition>
+
+        <div v-if="selectedView === 'monthly'" class="range-selector">
+          <div class="form-group">
+            <label>Start Month</label>
+            <select v-model="monthRange.start">
+              <option
+                v-for="(month, i) in dayjs.months()"
+                :key="i"
+                :value="i"
+                :disabled="i > monthRange.end"
+              >
+                {{ month }}
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>End Month</label>
+            <select v-model="monthRange.end">
+              <option
+                v-for="(month, i) in dayjs.months()"
+                :key="i"
+                :value="i"
+                :disabled="i < monthRange.start"
+              >
+                {{ month }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="selectedView === 'weekly'" class="range-selector">
+          <div class="form-group">
+            <label>Start Week</label>
+            <select v-model="weekRange.start">
+              <option
+                v-for="w in 52"
+                :key="w"
+                :value="w"
+                :disabled="w > weekRange.end"
+              >
+                Week {{ w }}
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>End Week</label>
+            <select v-model="weekRange.end">
+              <option
+                v-for="w in 52"
+                :key="w"
+                :value="w"
+                :disabled="w < weekRange.start"
+              >
+                Week {{ w }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="selectedView === 'daily'" class="form-group">
+          <label for="week-select">Week of Year</label>
+          <select id="week-select" v-model="dailyWeek">
+            <option v-for="week in 52" :key="week" :value="week">
+              Week {{ week }} ({{ getWeekDateRange(week) }})
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Time by Category Chart -->
+      <div class="stat-card">
+        <h3>Time by Category</h3>
+        <p class="chart-hint">{{ dynamicHint }}</p>
+        <div class="chart-container">
+          <Pie
+            v-if="filteredCategoryData.datasets[0].data.length > 0"
+            :data="filteredCategoryData"
+            :options="chartOptions"
+          />
+          <p v-else>No task data for this period.</p>
+        </div>
+      </div>
+
+      <!-- Main Time Breakdown Chart -->
+      <div class="stat-card full-width">
+        <h3 v-if="selectedView === 'monthly'">
+          Monthly Hours ({{ selectedYear }})
+        </h3>
+        <h3 v-if="selectedView === 'weekly'">
+          Weekly Hours ({{ selectedYear }})
+        </h3>
+        <h3 v-if="selectedView === 'daily'">
+          Daily Hours for Week {{ dailyWeek }}, {{ selectedYear }}
+        </h3>
+
+        <div class="chart-container">
+          <Bar
+            v-if="mainBreakdownChartData.datasets[0].data.some((d) => d > 0)"
+            :data="mainBreakdownChartData"
+            :options="barChartOptions"
+          />
+          <p v-else>No task data available for this view.</p>
+        </div>
+      </div>
+
+      <!-- Total Time Per Template Table -->
+      <div class="stat-card full-width">
+        <h3>Total Time per Task Type</h3>
+        <p class="chart-hint">{{ dynamicHint }}</p>
+        <table v-if="sortedTimePerTemplate.length > 0">
+          <thead>
+            <tr>
+              <th>Task Template</th>
+              <th>Total Hours Logged</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in sortedTimePerTemplate" :key="item.name">
+              <td>
+                <span class="template-cell">
+                  <span
+                    class="color-bar"
+                    :style="{ backgroundColor: item.color }"
+                  ></span>
+                  {{ item.name }}
+                </span>
+              </td>
+              <td>{{ item.time.toFixed(1) }}h</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else>No task data for this period.</p>
+      </div>
     </div>
   </div>
 </template>
 
-<style scoped>
-.analytics-page {
-  container: analytics / inline-size;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  width: 100%;
-  max-width: var(--content-max);
-  margin: 0 auto;
-  padding: var(--space-6) var(--space-8) var(--space-10);
-}
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import { useStats } from "@/composables/useStats";
+import { Bar, Pie } from "vue-chartjs";
+import {
+  Chart as ChartJS,
+  Title,
+  Tooltip,
+  Legend,
+  BarElement,
+  CategoryScale,
+  LinearScale,
+  ArcElement,
+  TooltipItem,
+} from "chart.js"; // <-- Import TooltipItem
+import dayjs from "dayjs";
+import weekOfYear from "dayjs/plugin/weekOfYear";
+import isoWeek from "dayjs/plugin/isoWeek";
+import localizedFormat from "dayjs/plugin/localizedFormat";
+import { useTaskStore } from "@/stores/taskStore"; // <-- Import task store for category names
 
-.analytics-body {
-  min-width: 0;
-}
+ChartJS.register(
+  Title,
+  Tooltip,
+  Legend,
+  BarElement,
+  CategoryScale,
+  LinearScale,
+  ArcElement
+);
+dayjs.extend(weekOfYear);
+dayjs.extend(isoWeek);
+dayjs.extend(localizedFormat);
+const { availableYears, useFilteredStats } = useStats();
+const taskStore = useTaskStore(); // <-- FIX: Instantiate the store here
 
-.analytics-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  transition: opacity var(--dur-base) var(--ease-standard);
-}
+const selectedYear = ref(availableYears.value[0] || dayjs().year());
+const selectedView = ref<"monthly" | "weekly" | "daily">("monthly");
+const dailyWeek = ref(dayjs().isoWeek());
+const monthRange = ref({ start: 0, end: 11 });
+const weekRange = ref({ start: 1, end: 52 });
 
-/* Refetch keeps the frame: previous data stays, dimmed, while the new range loads. */
-.is-refetching {
-  opacity: 0.6;
-}
+const {
+  categoryDistributionChartData: filteredCategoryData,
+  totalTimePerTemplate: filteredTemplateData,
+  mainBreakdownChartData,
+  isLoading,
+} = useFilteredStats({
+  year: selectedYear,
+  view: selectedView,
+  monthRange: monthRange,
+  weekRange: weekRange,
+  dailyWeek: dailyWeek,
+});
 
-.charts-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-}
+const sortedTimePerTemplate = computed(() =>
+  [...filteredTemplateData.value].sort((a, b) => b.time - a.time)
+);
 
-@container analytics (min-width: 960px) {
-  .charts-row {
-    grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+const dynamicHint = computed(() => {
+  switch (selectedView.value) {
+    case "monthly":
+      return `Showing data for months ${
+        dayjs.monthsShort()[monthRange.value.start]
+      } - ${dayjs.monthsShort()[monthRange.value.end]} of ${
+        selectedYear.value
+      }`;
+    case "weekly":
+      return `Showing data for weeks ${weekRange.value.start} - ${weekRange.value.end} of ${selectedYear.value}`;
+    case "daily":
+      return `Showing data for week ${dailyWeek.value} of ${selectedYear.value}`;
   }
+});
+
+// --- NEW: Custom Chart Options with Tooltip Callback ---
+const barChartOptions = computed(() => {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      tooltip: {
+        callbacks: {
+          // The 'footer' callback adds extra lines to the tooltip
+          footer: (tooltipItems: TooltipItem<"bar">[]) => {
+            const tooltipItem = tooltipItems[0];
+            if (!tooltipItem) return "";
+
+            // Retrieve our custom data from the dataset
+            // @ts-ignore - a necessary evil as chart.js types don't know about our custom property
+            const categoryTotals = (tooltipItem.dataset as any).categoryTotals[
+              tooltipItem.dataIndex
+            ];
+
+            if (!categoryTotals || Object.keys(categoryTotals).length === 0) {
+              return "No category data.";
+            }
+
+            // Format the breakdown into an array of strings
+            const breakdown = Object.entries(categoryTotals)
+              .map(([categoryId, hours]) => {
+                const category = taskStore.getCategoryById(categoryId);
+                return {
+                  name: category?.name || "Unknown",
+                  hours: hours as number,
+                };
+              })
+              .sort((a, b) => b.hours - a.hours) // Sort with largest first
+              .map((item) => `${item.name}: ${item.hours.toFixed(1)}h`);
+
+            return breakdown;
+          },
+        },
+      },
+    },
+  };
+});
+
+// Pie chart options can remain simple
+const chartOptions = { responsive: true, maintainAspectRatio: false };
+const getWeekDateRange = (weekNum: number) => {
+  const start = dayjs()
+    .year(selectedYear.value)
+    .isoWeek(weekNum)
+    .startOf("isoWeek")
+    .format("MMM D");
+  const end = dayjs()
+    .year(selectedYear.value)
+    .isoWeek(weekNum)
+    .endOf("isoWeek")
+    .format("MMM D");
+  return `${start} - ${end}`;
+};
+</script>
+<style scoped>
+/* ADD styles for the loading state */
+.loading-overlay {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+  font-size: 1.5rem;
+  color: #777;
+}
+.analytics-container {
+  padding: 2rem;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 2rem;
+  margin-top: 1rem;
 }
 
-.state-panel {
+.stat-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+}
+.stat-card.full-width {
+  grid-column: 1 / -1;
+}
+
+.stat-card h3 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+.stat-card p {
+  text-align: center;
+  color: #666;
+  margin: auto;
+}
+
+.chart-container {
+  position: relative;
+  height: 350px;
+  flex-grow: 1;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+th {
+  background-color: #f8f8f8;
+}
+
+/* --- NEW STYLES FOR THE COLOR BAR --- */
+.template-cell {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 320px;
-  padding: var(--space-12) var(--space-6);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  background-color: var(--bg-surface);
-  transition: opacity var(--dur-base) var(--ease-standard);
+  gap: 0.75rem;
+}
+.color-bar {
+  display: inline-block;
+  width: 4px;
+  height: 1.2rem;
+  border-radius: 2px;
 }
 
-.analytics-fade-enter-active,
-.analytics-fade-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-standard);
+/* Filter Styles */
+.filters-card h3 {
+  margin-bottom: 1.5rem;
 }
-.analytics-fade-enter-from,
-.analytics-fade-leave-to {
-  opacity: 0;
+.form-group {
+  margin-bottom: 1rem;
 }
-
-@media (max-width: 767.98px) {
-  .analytics-page {
-    gap: var(--space-4);
-    padding: var(--space-4) var(--space-4) var(--space-8);
-  }
-  .state-panel {
-    min-height: 260px;
-    padding: var(--space-10) var(--space-4);
-  }
+.form-group:last-child {
+  margin-bottom: 0;
+}
+.btn-group {
+  display: flex;
+  width: 100%;
+}
+.btn-group button {
+  flex-grow: 1;
+  background-color: #f0f0f0;
+  border: 1px solid #ccc;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.btn-group button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.btn-group button:nth-child(2) {
+  border-left: none;
+}
+.btn-group button:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+.btn-group button.active {
+  background-color: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+.range-selector {
+  display: flex;
+  gap: 1rem;
+}
+.range-selector .form-group {
+  flex: 1;
+}
+.chart-hint {
+  font-size: 0.8rem;
+  text-align: center;
+  color: #888;
+  margin: -0.5rem 0 0.5rem;
+  padding: 0;
 }
 </style>

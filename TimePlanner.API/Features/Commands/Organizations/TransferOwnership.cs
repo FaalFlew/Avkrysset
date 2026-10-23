@@ -2,7 +2,6 @@ using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
-using TimePlanner.API.Exceptions;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -35,22 +34,19 @@ public class TransferOwnershipCommandHandler : IRequestHandler<TransferOwnership
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: Only the current owner can transfer ownership.
-        await _context.RequireOwner(currentUserId.Value, request.OrganizationId, "Only the organization owner can transfer ownership.", cancellationToken);
+        if (!await _context.IsOwner(currentUserId.Value, request.OrganizationId, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("Only the organization owner can transfer ownership.");
+        }
 
         if (currentUserId == request.NewOwnerUserId)
         {
-            throw new BadRequestException("You cannot transfer ownership to yourself.");
+            throw new InvalidOperationException("You cannot transfer ownership to yourself.");
         }
 
-        // The transaction runs inside the context's retrying execution strategy (EnableRetryOnFailure rejects a
-        // user-initiated transaction outside of it). Each attempt starts with an empty change tracker and loads
-        // everything it changes; disposing an uncommitted transaction rolls it back.
-        var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
+        var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
         {
-            _context.ChangeTracker.Clear();
-            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-
             // 1. Get the organization and both the current and future owner's memberships.
             var organization = await _context.Organizations.FindAsync(new object[] { request.OrganizationId }, cancellationToken);
             var currentOwnerMembership = await _context.OrganizationMemberships.SingleAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId, cancellationToken);
@@ -61,7 +57,7 @@ public class TransferOwnershipCommandHandler : IRequestHandler<TransferOwnership
             // 2. Business Rule: The new owner must be an existing, active Admin.
             if (newOwnerMembership == null || newOwnerMembership.Status != MembershipStatus.Active || newOwnerMembership.Role != OrganizationRoles.Admin)
             {
-                throw new BadRequestException("Ownership can only be transferred to an active Admin of the organization.");
+                throw new InvalidOperationException("Ownership can only be transferred to an active Admin of the organization.");
             }
 
             // 3. Perform the swap.
@@ -76,14 +72,18 @@ public class TransferOwnershipCommandHandler : IRequestHandler<TransferOwnership
 
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-        });
 
-        // Only after the commit, and only once even if the transaction was retried.
-        await _notificationService.OwnershipTransferred(request.OrganizationId, request.NewOwnerUserId, currentUserId.Value);
-        await _notificationService.MemberRoleUpdated(request.OrganizationId, request.NewOwnerUserId, OrganizationRoles.Owner);
-        await _notificationService.MemberRoleUpdated(request.OrganizationId, currentUserId.Value, OrganizationRoles.Admin);
+            await _notificationService.OwnershipTransferred(request.OrganizationId, request.NewOwnerUserId, currentUserId.Value);
+            await _notificationService.MemberRoleUpdated(request.OrganizationId, request.NewOwnerUserId, OrganizationRoles.Owner);
+            await _notificationService.MemberRoleUpdated(request.OrganizationId, currentUserId.Value, OrganizationRoles.Admin);
 
-        _logger.LogInformation("Ownership of Organization {OrganizationId} transferred from User {OldOwnerId} to User {NewOwnerId}.",
-            request.OrganizationId, currentUserId, request.NewOwnerUserId);
+            _logger.LogInformation("Ownership of Organization {OrganizationId} transferred from User {OldOwnerId} to User {NewOwnerId}.",
+                request.OrganizationId, currentUserId, request.NewOwnerUserId);
+        }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 }

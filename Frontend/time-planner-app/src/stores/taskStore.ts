@@ -1,311 +1,200 @@
-// src/stores/taskStore.ts — tasks, templates and categories for guests (localStorage) and
-// signed-in users (API). All instants are canonical UTC strings; date math lives in
-// src/lib/datetime.ts.
+// src/stores/taskStore.ts
 
 import { defineStore } from "pinia";
 import { v4 as uuidv4 } from "uuid";
+import dayjs from "dayjs";
+import isBetween from "dayjs/plugin/isBetween";
 import { useUIStore } from "./uiStore";
-import type { Task, TaskTemplate, Category, MigrationData } from "@/types";
-import type { ToastAction } from "@/components/ui/types";
-import { apiDataService } from "@/services/apiDataService";
-import { useAuthStore } from "./authStore";
+import {
+  taskService,
+  templateService,
+  categoryService,
+} from "@/services/localDataService";
+import { Task, TaskTemplate, Category, MigrationData } from "@/types"; // ADDED MigrationData
+import { apiDataService } from "@/services/apiDataService"; // ADDED
+import { useAuthStore } from "./authStore"; // ADDED
 import {
   localTaskService,
   localTemplateService,
   localCategoryService,
 } from "@/services/localDataService";
-import {
-  dayRange,
-  formatDate,
-  isInRange,
-  normalizeStoredInstant,
-  overlaps,
-  toApiInstant,
-  toDateKey,
-  todayKey,
-  tryParseApiInstant,
-  type DateKey,
-  type InstantRange,
-} from "@/lib/datetime";
-import { OTHER_COLOR } from "@/lib/categoryPalette";
-import { apiErrorMessage, isBadRequest, isConflict, isForbidden, NETWORK_ERROR_MESSAGE } from "@/lib/apiErrors";
-import {
-  canDeleteTask,
-  canEditTask,
-  isOrgTask,
-  managedMessage,
-  OVERLAP_MESSAGE,
-  overlapMessage,
-  taskCapabilities,
-} from "@/lib/taskAccess";
 
-/** Same rule as the server: half-open intervals, so touching tasks do not overlap. */
+dayjs.extend(isBetween);
+
 const isOverlapping = (
-  taskA: Pick<Task, "start" | "duration">,
-  taskB: Pick<Task, "start" | "duration">
-): boolean => overlaps(taskA.start, taskA.duration, taskB.start, taskB.duration);
-
-/** Canonical UTC form of a task start (string instants follow API semantics), or null. */
-const canonicalStart = (start: string): string | null => {
-  const ms = tryParseApiInstant(start);
-  return ms === null ? null : toApiInstant(ms);
+  taskA: Omit<Task, "id" | "categoryName" | "categoryColor">,
+  taskB: Task
+): boolean => {
+  const startA = dayjs(taskA.start);
+  const endA = startA.add(taskA.duration, "hour");
+  const startB = dayjs(taskB.start);
+  const endB = startB.add(taskB.duration, "hour");
+  return startA.isBefore(endB) && startB.isBefore(endA);
 };
 
-// Error copy lives in src/lib/apiErrors.ts (re-exported here for existing importers).
-export { apiErrorMessage, NETWORK_ERROR_MESSAGE };
-/** Same wording as the server's 409 (CreateTask/UpdateTask), so both paths read alike. */
-export { OVERLAP_MESSAGE };
-export const WEEK_ERROR_MESSAGE =
-  "Couldn't load this week's tasks. Check your connection — what's on screen may be out of date.";
-export const INIT_ERROR_MESSAGE = "Couldn't load your categories and templates.";
-export const TODAY_ERROR_MESSAGE = "Couldn't load today's plan.";
-
-/** `updateTask` options. A boolean is still accepted and means `{ silent }` (legacy signature). */
-export interface UpdateTaskOptions {
-  /** No toasts at all, not even errors. */
-  silent?: boolean;
-  /** No success toast (task updates never show one anymore; kept for callers that pass it). */
-  silentSuccess?: boolean;
-  /**
-   * Action on the error toast when the server rejects the change as invalid (HTTP 400, e.g. a
-   * duration it no longer accepts) — e.g. "Edit" to open the task in the editor.
-   */
-  errorAction?: ToastAction;
-}
-
-export interface AddTaskOptions {
-  /** Suppress error toasts. */
-  silent?: boolean;
-}
-
-export type NewTaskData = Omit<Task, "id" | "categoryName" | "categoryColor">;
-
-// Request bookkeeping (not reactive state).
-let initPromise: Promise<void> | null = null;
-let weekRequestSeq = 0;
-let todayRequestSeq = 0;
-let lastWeekRange: InstantRange | null = null;
-/** Successful task mutations so far; a week response that started before one is stale. */
-let taskMutations = 0;
-
 export const useTaskStore = defineStore("tasks", {
+  // MODIFICATION: State is now initialized as empty. It will be populated by our new initialize action.
+
   state: () => ({
     tasks: [] as Task[],
     templates: [] as TaskTemplate[],
     categories: [] as Category[],
-    /** Tasks of `todayTasksDay` (signed-in users; guests derive Today from `tasks`). */
     todayTasks: [] as Task[],
-    todayTasksDay: null as DateKey | null,
-
-    /** Loading flags, one per request kind (no cross-talk between views). */
-    isInitializing: false,
-    isLoadingWeek: false,
-    isLoadingToday: false,
-    /** Error copy per request kind, `null` when the last attempt succeeded. */
-    initError: null as string | null,
-    weekError: null as string | null,
-    todayError: null as string | null,
-
-    /** Whether guest data has been read from localStorage into the state. */
-    guestDataLoaded: false,
+    isLoading: true, // ADDED: Loading state for better UX
   }),
 
   getters: {
     getCategoryById: (state) => (id: string) =>
       state.categories.find((c) => c.id === id),
     getTaskById: (state) => (id: string) =>
-      state.tasks.find((t) => t.id === id) ?? state.todayTasks.find((t) => t.id === id),
+      state.tasks.find((t) => t.id === id),
     otherCategory: (state) => state.categories.find((c) => c.name === "Other"),
-    /** Any request in flight (legacy aggregate; prefer the specific flags). */
-    isLoading: (state) => state.isInitializing || state.isLoadingWeek || state.isLoadingToday,
   },
 
   actions: {
-    /**
-     * Load categories and templates (signed in) or all guest data (guest).
-     * Concurrent calls share one request. Failures set `initError` (shown as a banner with Retry).
-     */
-    async initializeData(): Promise<void> {
+    // --- NEW MASTER INITIALIZATION ACTION ---
+    async initializeData() {
+      this.isLoading = true;
       const authStore = useAuthStore();
-      if (!authStore.isAuthenticated) {
-        this.loadGuestData();
-        this.initError = null;
-        return;
-      }
-      if (initPromise) return initPromise;
+      const uiStore = useUIStore();
 
-      initPromise = (async () => {
-        this.isInitializing = true;
-        this.initError = null;
-        try {
+      try {
+        if (authStore.isAuthenticated) {
+          // User is logged in, fetch data from the API
           const [categories, templates] = await Promise.all([
             apiDataService.getCategories(),
             apiDataService.getTaskTemplates(),
+            // Tasks will be fetched on-demand by the WeekView component
           ]);
           this.categories = categories;
           this.templates = templates;
-          // Coming from guest mode: drop the guest tasks; the week is fetched by date range.
-          if (this.guestDataLoaded) {
-            this.tasks = [];
-            this.todayTasks = [];
-            this.todayTasksDay = null;
+          this.tasks = []; // Reset tasks, they will be fetched by date range
+        } else {
+          // User is a guest, load data from localStorage
+          this.categories = localCategoryService.getCategories();
+          this.templates = localTemplateService.getTemplates();
+          this.tasks = localTaskService.getTasks();
+
+          // Ensure the default "Other" category exists for guests
+          if (!this.categories.find((c) => c.name === "Other")) {
+            const otherCategory = {
+              id: uuidv4(),
+              name: "Other",
+              color: "#8B949E",
+            };
+            this.categories.unshift(otherCategory); // Add to the start
           }
-          this.guestDataLoaded = false;
-        } catch (error) {
-          console.error("Failed to initialize data:", error);
-          this.initError = INIT_ERROR_MESSAGE;
-        } finally {
-          this.isInitializing = false;
-          initPromise = null;
         }
-      })();
-      return initPromise;
-    },
-
-    /** Guest mode: read categories, templates and tasks from localStorage (synchronous). */
-    loadGuestData() {
-      this.categories = localCategoryService.getCategories();
-      this.templates = localTemplateService.getTemplates();
-      this.tasks = localTaskService.getTasks();
-      this.todayTasks = [];
-      this.todayTasksDay = null;
-      this.weekError = null;
-      this.todayError = null;
-
-      // Ensure the default "Other" category exists for guests
-      if (!this.categories.find((c) => c.name === "Other")) {
-        this.categories.unshift({ id: uuidv4(), name: "Other", color: OTHER_COLOR });
+      } catch (error) {
+        console.error("Failed to initialize data:", error);
+        uiStore.showToast(
+          "Could not load your data. Please try again later.",
+          "error"
+        );
+      } finally {
+        this.isLoading = false;
       }
-      this.guestDataLoaded = true;
     },
 
-    /** Authenticated mode: load the tasks starting in `[range.start, range.end)`. */
-    async fetchTasksForRange(range: InstantRange) {
+    // --- NEW ACTION to fetch tasks for a specific date range ---
+    async fetchTasksForRange(startDate: string, endDate: string) {
       const authStore = useAuthStore();
       if (!authStore.isAuthenticated) return; // Only for logged-in users
 
-      lastWeekRange = range;
-      const seq = ++weekRequestSeq;
-      const mutationsAtStart = taskMutations;
-      this.isLoadingWeek = true;
-      this.weekError = null;
+      this.isLoading = true;
       try {
-        const tasks = await apiDataService.getTasks(range);
-        if (seq !== weekRequestSeq) return; // a newer week was requested meanwhile
-        if (taskMutations !== mutationsAtStart) {
-          // A task was added/moved/deleted while this request was in flight (e.g. dropped into
-          // this week mid-load): the response may predate it. Keep the optimistic state and ask
-          // again instead of overwriting it.
-          void this.fetchTasksForRange(range);
-          return;
-        }
+        const tasks = await apiDataService.getTasks(startDate, endDate);
+        // Replace the current tasks with the fetched ones.
+        // A more advanced implementation might merge them, but for a simple week view, replacing is fine.
         this.tasks = tasks;
       } catch (error) {
-        if (seq !== weekRequestSeq) return;
         console.error("Failed to fetch tasks:", error);
-        this.weekError = WEEK_ERROR_MESSAGE;
+        useUIStore().showToast("Could not load tasks for this week.", "error");
       } finally {
-        if (seq === weekRequestSeq) this.isLoadingWeek = false;
+        this.isLoading = false;
       }
     },
 
-    /** Re-run the last week fetch (error banner "Retry"). */
-    async retryWeek() {
-      if (this.initError) await this.initializeData();
-      if (lastWeekRange) await this.fetchTasksForRange(lastWeekRange);
-    },
-
-    /**
-     * After a 409 the server knows a task we don't (e.g. added on another device): reload the
-     * visible week and Today so the conflicting task appears where the user tried to go.
-     */
-    refreshAfterConflict() {
-      if (!useAuthStore().isAuthenticated) return;
-      if (lastWeekRange) void this.fetchTasksForRange(lastWeekRange);
-      if (this.todayTasksDay) void this.fetchTodayTasks(this.todayTasksDay);
-    },
-
-    /**
-     * Reload after the server refused a change it knows more about: 409 (a task we don't have)
-     * or 403 (my permissions changed, e.g. I was removed from the organization or an admin made
-     * the task read-only) — the fresh capabilities stop the UI from offering the action again.
-     */
-    refreshAfterRejection(error: unknown) {
-      if (isConflict(error) || isForbidden(error)) this.refreshAfterConflict();
-    },
-
-    // --- Guest → account migration ---
+    // --- NEW ACTION for data migration ---
     getLocalDataForMigration(): MigrationData {
-      // Called during registration. The default "Other" category is not migrated.
+      // This helper function will be called during registration
       const categories = localCategoryService.getCategories();
       const templates = localTemplateService.getTemplates();
       const tasks = localTaskService.getTasks();
 
-      const mapCategory = (c: Category) => ({ id: c.id, name: c.name, color: c.color });
+      // The backend DTOs expect specific fields, so we map them just in case.
+      // This also filters out the default "Other" category from migration.
+      const mapCategory = (c: Category) => ({
+        id: c.id,
+        name: c.name,
+        color: c.color,
+      });
       const mapTemplate = (t: TaskTemplate) => ({
         id: t.id,
         title: t.title,
         duration: t.duration,
         categoryId: t.categoryId,
       });
-      // The server parses `start` as UTC, so it must be canonical UTC (legacy guest values were
-      // local wall-clock strings; localTaskService already normalizes, this is belt and braces).
-      const mapTask = (t: Task) => {
-        const start = normalizeStoredInstant(t.start);
-        return start === null
-          ? null
-          : {
-              title: t.title,
-              start,
-              duration: t.duration,
-              categoryId: t.categoryId,
-              templateId: t.templateId,
-            };
-      };
+      const mapTask = (t: Task) => ({
+        title: t.title,
+        start: t.start,
+        duration: t.duration,
+        categoryId: t.categoryId,
+        templateId: t.templateId,
+      });
 
       return {
-        categories: categories.filter((c) => c.name !== "Other").map(mapCategory),
+        categories: categories
+          .filter((c) => c.name !== "Other")
+          .map(mapCategory),
         templates: templates.map(mapTemplate),
-        tasks: tasks
-          .map(mapTask)
-          .filter((t): t is NonNullable<ReturnType<typeof mapTask>> => t !== null),
+        tasks: tasks.map(mapTask),
       };
     },
 
+    // --- NEW ACTION to clear local data after migration ---
     clearLocalData() {
       localTaskService.clearTasks();
       localTemplateService.clearTemplates();
       localCategoryService.clearCategories();
+      // Also clear the store's state
       this.tasks = [];
       this.templates = [];
       this.categories = [];
-      this.todayTasks = [];
-      this.todayTasksDay = null;
     },
 
-    // --- Categories ---
-    async addCategory(categoryData: Omit<Category, "id">): Promise<Category | null> {
+    // --- REIMPLEMENTED CATEGORY ACTIONS ---
+    async addCategory(
+      categoryData: Omit<Category, "id">
+    ): Promise<Category | null> {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       try {
-        const newCategory: Category = authStore.isAuthenticated
-          ? await apiDataService.createCategory(categoryData)
-          : { ...categoryData, id: uuidv4() };
-        this.categories.push(newCategory);
-        uiStore.showToast("Category added", "success", 2500);
-        return newCategory;
+        if (authStore.isAuthenticated) {
+          const newCategory = await apiDataService.createCategory(categoryData);
+          this.categories.push(newCategory);
+          uiStore.showToast("Category created!", "success");
+          return newCategory;
+        } else {
+          const newCategory: Category = { ...categoryData, id: uuidv4() };
+          this.categories.push(newCategory);
+          uiStore.showToast("Category created!", "success");
+          return newCategory;
+        }
       } catch (error) {
-        uiStore.showToast(apiErrorMessage(error, "Couldn't add the category."), "error");
+        uiStore.showToast("Failed to create category.", "error");
         console.error(error);
         return null;
       }
     },
 
-    async updateCategory(updatedCategory: Category): Promise<boolean> {
+    async updateCategory(updatedCategory: Category) {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
-      const index = this.categories.findIndex((c) => c.id === updatedCategory.id);
-      if (index === -1) return false;
+      const index = this.categories.findIndex(
+        (c) => c.id === updatedCategory.id
+      );
+      if (index === -1) return;
 
       try {
         if (authStore.isAuthenticated) {
@@ -315,138 +204,119 @@ export const useTaskStore = defineStore("tasks", {
           });
         }
         this.categories[index] = updatedCategory;
-        this.syncCategoryFields(updatedCategory.id, updatedCategory);
-        uiStore.showToast("Category saved", "success", 2500);
-        return true;
+        uiStore.showToast("Category updated!", "success");
       } catch (error) {
-        uiStore.showToast(apiErrorMessage(error, "Couldn't save the category."), "error");
+        uiStore.showToast("Failed to update category.", "error");
         console.error(error);
-        return false;
       }
     },
 
-    async deleteCategory(categoryId: string): Promise<boolean> {
+    async deleteCategory(categoryId: string) {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       const otherCat = this.otherCategory;
 
       if (!otherCat || categoryId === otherCat.id) {
-        uiStore.showToast("The default “Other” category can't be deleted.", "error");
-        return false;
+        uiStore.showToast(
+          "The default 'Other' category cannot be deleted.",
+          "error"
+        );
+        return;
       }
 
       try {
         if (authStore.isAuthenticated) {
-          // The backend re-assigns tasks and templates; refresh templates from the server.
           await apiDataService.deleteCategory(categoryId);
+          // For auth users, the backend handles re-assigning. We just need to refresh the data.
+          // A simple way is to re-fetch, a more optimized way would be to update locally.
+          // For now, let's re-fetch for simplicity and data consistency.
           this.templates = await apiDataService.getTaskTemplates();
+          // We can't just re-fetch tasks as it would wipe out the current view.
+          // The backend ensures tasks are reassigned, so we just need to update the UI.
+          this.tasks.forEach((task) => {
+            if (task.categoryId === categoryId) {
+              task.categoryId = otherCat.id;
+              task.categoryName = otherCat.name;
+              task.categoryColor = otherCat.color;
+            }
+          });
+        } else {
+          // Guest mode: Manually re-assign tasks and templates
+          this.tasks.forEach((task) => {
+            if (task.categoryId === categoryId) task.categoryId = otherCat.id;
+          });
+          this.templates.forEach((template) => {
+            if (template.categoryId === categoryId)
+              template.categoryId = otherCat.id;
+          });
         }
-        // Re-assign locally (guest: the source of truth; signed in: mirrors the server).
-        this.syncCategoryFields(categoryId, otherCat);
+
         this.categories = this.categories.filter((c) => c.id !== categoryId);
-        uiStore.showToast("Category deleted. Its items moved to “Other”.", "info");
-        return true;
+        uiStore.showToast(
+          "Category deleted. Associated items moved to 'Other'.",
+          "info"
+        );
       } catch (error) {
-        uiStore.showToast(apiErrorMessage(error, "Couldn't delete the category."), "error");
+        uiStore.showToast("Failed to delete category.", "error");
         console.error(error);
-        return false;
       }
     },
 
-    /** Point every task/template of category `fromId` at `to` and refresh the denormalized fields. */
-    syncCategoryFields(fromId: string, to: Category) {
-      const apply = (item: { categoryId: string; categoryName: string; categoryColor: string }) => {
-        if (item.categoryId !== fromId) return;
-        item.categoryId = to.id;
-        item.categoryName = to.name;
-        item.categoryColor = to.color;
-      };
-      this.tasks.forEach(apply);
-      this.todayTasks.forEach(apply);
-      this.templates.forEach(apply);
-    },
-
-    // --- Tasks ---
-    /**
-     * Create a task. Returns the created task, or `null` (an error toast explains why unless
-     * `silent`). No success toast: the task appearing on the calendar is the feedback.
-     */
-    async addTask(taskData: NewTaskData, options: AddTaskOptions = {}): Promise<Task | null> {
+    // --- REIMPLEMENTED TASK ACTIONS ---
+    async addTask(
+      taskData: Omit<Task, "id" | "categoryName" | "categoryColor">
+    ): Promise<boolean> {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
-      const fail = (message: string): null => {
-        if (!options.silent) uiStore.showToast(message, "error");
-        return null;
-      };
-
       const category = this.getCategoryById(taskData.categoryId);
-      if (!category) return fail("Pick a category for this task.");
-      const start = canonicalStart(taskData.start);
-      if (start === null) return fail("Please enter a valid date and start time.");
-      taskData = { ...taskData, start };
+      if (!category) {
+        uiStore.showToast("Invalid category selected.", "error");
+        return false;
+      }
 
-      let newTask: Task;
       if (authStore.isAuthenticated) {
         try {
-          newTask = await apiDataService.createTask(taskData);
-        } catch (error) {
-          this.refreshAfterRejection(error);
-          return fail(apiErrorMessage(error, "Couldn't add the task."));
+          const newTask = await apiDataService.createTask(taskData);
+          this.tasks.push(newTask);
+          uiStore.showToast("Task created successfully!", "success");
+          return true;
+        } catch (error: any) {
+          const message =
+            error.response?.data?.message || "Failed to create task.";
+          uiStore.showToast(message, "error");
+          return false;
         }
       } else {
-        const clash = this.tasks.find((existing) => isOverlapping(taskData, existing));
-        if (clash) return fail(overlapMessage(clash));
-        newTask = {
+        // Guest mode overlap check
+        for (const existingTask of this.tasks) {
+          if (isOverlapping(taskData, existingTask)) {
+            uiStore.showToast(
+              "Error: This time slot overlaps with an existing task.",
+              "error"
+            );
+            return false;
+          }
+        }
+        const newTask: Task = {
           ...taskData,
           id: uuidv4(),
           categoryName: category.name,
           categoryColor: category.color,
         };
+        this.tasks.push(newTask);
+        uiStore.showToast("Task created successfully!", "success");
+        return true;
       }
-
-      taskMutations += 1;
-      this.tasks.push(newTask);
-      if (this.isInTodayList(newTask)) this.todayTasks.push(newTask);
-      return newTask;
     },
 
-    /**
-     * Save changes to a task. Returns `true` on success. Errors (server message verbatim, overlap,
-     * network) are toasted unless `silent`. The second argument may be a boolean (= silent).
-     */
     async updateTask(
       updatedTask: Task,
-      options: boolean | UpdateTaskOptions = {}
+      silent: boolean = false
     ): Promise<boolean> {
-      const opts: UpdateTaskOptions = typeof options === "boolean" ? { silent: options } : options;
       const authStore = useAuthStore();
       const uiStore = useUIStore();
-      const fail = (message: string, action?: ToastAction): false => {
-        if (!opts.silent) uiStore.showToast(message, "error", action ? 8000 : 4000, action ? { action } : {});
-        return false;
-      };
-
-      // Guests hold every task locally, so an unknown id means it was deleted. Signed-in users only
-      // hold the visible week: a task dragged into another week may no longer be in the list
-      // (the server is the authority and answers 404 for a deleted task).
-      const known =
-        this.tasks.some((t) => t.id === updatedTask.id) ||
-        this.todayTasks.some((t) => t.id === updatedTask.id);
-      if (!known && !authStore.isAuthenticated) return false;
-
-      // Org tasks an admin assigned to me are read-only (Q1); the UI blocks this earlier, the
-      // server refuses it too — this is the safety net.
-      if (!canEditTask(updatedTask)) return fail(managedMessage(updatedTask));
-
-      const start = canonicalStart(updatedTask.start);
-      if (start === null) return fail("Please enter a valid date and start time.");
-      const category = this.getCategoryById(updatedTask.categoryId);
-      updatedTask = {
-        ...updatedTask,
-        start,
-        categoryName: category?.name ?? updatedTask.categoryName,
-        categoryColor: category?.color ?? updatedTask.categoryColor,
-      };
+      const index = this.tasks.findIndex((t) => t.id === updatedTask.id);
+      if (index === -1) return false;
 
       const taskDataForApi = {
         title: updatedTask.title,
@@ -458,308 +328,188 @@ export const useTaskStore = defineStore("tasks", {
 
       if (authStore.isAuthenticated) {
         try {
-          // Org tasks are saved through the organization (personal endpoints refuse them).
-          if (isOrgTask(updatedTask)) {
-            await apiDataService.updateOrganizationTask(updatedTask.organizationId!, updatedTask.id, taskDataForApi);
-          } else {
-            await apiDataService.updateTask(updatedTask.id, taskDataForApi);
-          }
-        } catch (error) {
-          this.refreshAfterRejection(error);
-          return fail(apiErrorMessage(error, "Couldn't save the task."), isBadRequest(error) ? opts.errorAction : undefined);
+          await apiDataService.updateTask(updatedTask.id, taskDataForApi);
+          // The API call succeeded, now update local state
+          this.tasks[index] = updatedTask;
+          if (!silent) uiStore.showToast("Task updated!", "success");
+          return true;
+        } catch (error: any) {
+          const message =
+            error.response?.data?.message || "Failed to update task.";
+          if (!silent) uiStore.showToast(message, "error");
+          return false;
         }
       } else {
-        const clash = this.tasks.find((t) => t.id !== updatedTask.id && isOverlapping(taskDataForApi, t));
-        if (clash) return fail(overlapMessage(clash));
+        // Guest mode overlap check
+        for (const existingTask of this.tasks) {
+          if (
+            existingTask.id !== updatedTask.id &&
+            isOverlapping(taskDataForApi, existingTask)
+          ) {
+            if (!silent)
+              uiStore.showToast(
+                "Error: This time slot overlaps with an existing task.",
+                "error"
+              );
+            return false;
+          }
+        }
+        this.tasks[index] = updatedTask;
+        if (!silent) uiStore.showToast("Task updated!", "success");
+        return true;
       }
-
-      this.replaceTaskLocally(updatedTask);
-      taskMutations += 1;
-      return true;
     },
 
-    /**
-     * Save a drag/keyboard move. When the task left the view (another week, or another day on
-     * phones), a "Moved to Monday, October 12" toast offers Undo for 6 seconds (Ctrl/⌘+Z too):
-     * Undo moves it back and shows its original day again.
-     */
-    async moveTask(
-      updated: Task,
-      original: Task,
-      options: { announceDestination?: boolean; errorAction?: ToastAction } = {}
-    ): Promise<boolean> {
-      const uiStore = useUIStore();
-      const ok = await this.updateTask(updated, { silentSuccess: true, errorAction: options.errorAction });
-      if (!ok || !options.announceDestination) return ok;
-
-      const day = toDateKey(updated.start);
-      uiStore.showToast(`Moved to ${formatDate(day, "weekday")}`, "success", 6000, {
-        undo: true,
-        action: {
-          label: "Undo",
-          onClick: () => {
-            const back: Task = { ...updated, start: original.start, duration: original.duration };
-            void this.updateTask(back, { silentSuccess: true }).then((restored) => {
-              if (!restored) return;
-              uiStore.currentDate = toDateKey(original.start);
-              uiStore.requestTaskFocus(original.id);
-            });
-          },
-        },
-      });
-      return true;
-    },
-
-    /** Put `task` into `tasks` and keep `todayTasks` consistent with its (new) start. */
-    replaceTaskLocally(task: Task) {
-      const index = this.tasks.findIndex((t) => t.id === task.id);
-      if (index !== -1) this.tasks[index] = task;
-      else this.tasks.push(task);
-
-      const todayIndex = this.todayTasks.findIndex((t) => t.id === task.id);
-      const belongsToday = this.isInTodayList(task);
-      if (todayIndex !== -1 && belongsToday) this.todayTasks[todayIndex] = task;
-      else if (todayIndex !== -1) this.todayTasks.splice(todayIndex, 1);
-      else if (belongsToday) this.todayTasks.push(task);
-    },
-
-    /** Whether a task belongs in the signed-in Today list that is currently loaded. */
-    isInTodayList(task: Pick<Task, "start">): boolean {
-      return this.todayTasksDay !== null && isInRange(task.start, dayRange(this.todayTasksDay));
-    },
-
-    /**
-     * Delete a task optimistically: it disappears at once and a "Task deleted" toast offers Undo
-     * for 6 seconds (Ctrl/⌘+Z works too). If the server refuses, the task is restored.
-     */
-    async deleteTask(taskId: string, options: { undo?: boolean } = {}): Promise<boolean> {
+    async deleteTask(taskId: string) {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
-      const withUndo = options.undo ?? true;
-
-      const original = this.getTaskById(taskId);
-      if (!original) return false;
-      if (!canDeleteTask(original)) {
-        uiStore.showToast(
-          isOrgTask(original) && canEditTask(original)
-            ? "Only admins or the person who created this task can delete it."
-            : managedMessage(original),
-          "info"
-        );
-        return false;
-      }
-      const taskIndex = this.tasks.findIndex((t) => t.id === taskId);
-      const todayIndex = this.todayTasks.findIndex((t) => t.id === taskId);
-
-      if (taskIndex !== -1) this.tasks.splice(taskIndex, 1);
-      if (todayIndex !== -1) this.todayTasks.splice(todayIndex, 1);
-      taskMutations += 1; // a week response already in flight may still contain it
-
-      const restore = () => {
-        if (taskIndex !== -1 && !this.tasks.some((t) => t.id === taskId)) {
-          this.tasks.splice(Math.min(taskIndex, this.tasks.length), 0, original);
-        }
-        if (todayIndex !== -1 && !this.todayTasks.some((t) => t.id === taskId)) {
-          this.todayTasks.splice(Math.min(todayIndex, this.todayTasks.length), 0, original);
-        }
-      };
-
-      // Signed in: the server request. Resolves true when the task is gone for good.
-      const request = () =>
-        isOrgTask(original)
-          ? apiDataService.deleteOrganizationTask(original.organizationId!, taskId)
-          : apiDataService.deleteTask(taskId);
-      const deleted: Promise<boolean> = authStore.isAuthenticated
-        ? request().then(
-            () => {
-              taskMutations += 1;
-              return true;
-            },
-            (error: unknown) => {
-              console.error(error);
-              restore();
-              this.refreshAfterRejection(error);
-              uiStore.showToast(apiErrorMessage(error, "Couldn't delete the task."), "error");
-              return false;
-            }
-          )
-        : Promise.resolve(true);
-
-      if (withUndo) {
-        uiStore.showToast("Task deleted", "info", 6000, {
-          undo: true,
-          action: {
-            label: "Undo",
-            // Wait for a DELETE still in flight (cold server): re-creating first would hit the
-            // overlap rule against the not-yet-deleted original, and the DELETE would then remove
-            // the task for good. If the DELETE failed, the task was already restored.
-            onClick: () => {
-              void deleted.then((ok) => {
-                if (!ok) return;
-                if (isOrgTask(original)) {
-                  void this.restoreOrganizationTask(original);
-                  return;
-                }
-                void this.addTask({
-                  title: original.title,
-                  start: original.start,
-                  duration: original.duration,
-                  categoryId: original.categoryId,
-                  templateId: original.templateId,
-                });
-              });
-            },
-          },
-        });
-      }
-
-      return deleted;
-    },
-
-    /**
-     * Undo of a deleted org task: re-create it in its organization — with the same assignees
-     * when I may (re)assign, else as my own org task. It gets a new id.
-     */
-    async restoreOrganizationTask(original: Task): Promise<Task | null> {
-      const uiStore = useUIStore();
-      const assigneeIds = taskCapabilities(original).canReassign
-        ? (original.assignees ?? []).map((a) => a.userId).filter(Boolean)
-        : null;
       try {
-        const created = await apiDataService.createOrganizationTask(
-          original.organizationId!,
-          { title: original.title, start: original.start, duration: original.duration, categoryId: original.categoryId },
-          assigneeIds
-        );
-        taskMutations += 1;
-        this.tasks.push(created);
-        if (this.isInTodayList(created)) this.todayTasks.push(created);
-        return created;
+        if (authStore.isAuthenticated) {
+          await apiDataService.deleteTask(taskId);
+        }
+        this.tasks = this.tasks.filter((t) => t.id !== taskId);
+        uiStore.showToast("Task deleted.", "info");
       } catch (error) {
-        this.refreshAfterRejection(error);
-        uiStore.showToast(apiErrorMessage(error, "Couldn't restore the task."), "error");
-        return null;
+        uiStore.showToast("Failed to delete task.", "error");
+        console.error(error);
       }
     },
 
-    // --- Templates ---
+    // --- REIMPLEMENTED TEMPLATE ACTIONS (abbreviated for clarity, same pattern) ---
     async addTemplate(
       templateData: Omit<TaskTemplate, "id" | "categoryName" | "categoryColor">
-    ): Promise<TaskTemplate | null> {
+    ) {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       const category = this.getCategoryById(templateData.categoryId);
 
       if (!category) {
-        uiStore.showToast("Pick a category for this template.", "error");
-        return null;
-      }
-
-      try {
-        const newTemplate: TaskTemplate = authStore.isAuthenticated
-          ? await apiDataService.createTaskTemplate(templateData)
-          : {
-              ...templateData,
-              id: uuidv4(),
-              categoryName: category.name,
-              categoryColor: category.color,
-            };
-        this.templates.push(newTemplate);
-        uiStore.showToast("Template added", "success", 2500);
-        return newTemplate;
-      } catch (error) {
-        console.error("Failed to create template:", error);
-        uiStore.showToast(apiErrorMessage(error, "Couldn't add the template."), "error");
-        return null;
-      }
-    },
-
-    async deleteTemplate(templateId: string): Promise<boolean> {
-      const authStore = useAuthStore();
-      const uiStore = useUIStore();
-      try {
-        if (authStore.isAuthenticated) await apiDataService.deleteTaskTemplate(templateId);
-        this.templates = this.templates.filter((t) => t.id !== templateId);
-        uiStore.showToast("Template deleted", "info", 2500);
-        return true;
-      } catch (error) {
-        console.error("Failed to delete template:", error);
-        uiStore.showToast(apiErrorMessage(error, "Couldn't delete the template."), "error");
-        return false;
-      }
-    },
-
-    async updateTemplate(updatedTemplate: TaskTemplate): Promise<boolean> {
-      const authStore = useAuthStore();
-      const uiStore = useUIStore();
-      const index = this.templates.findIndex((t) => t.id === updatedTemplate.id);
-      if (index === -1) return false;
-
-      const category = this.getCategoryById(updatedTemplate.categoryId);
-      updatedTemplate = {
-        ...updatedTemplate,
-        categoryName: category?.name ?? updatedTemplate.categoryName,
-        categoryColor: category?.color ?? updatedTemplate.categoryColor,
-      };
-
-      try {
-        if (authStore.isAuthenticated) {
-          await apiDataService.updateTaskTemplate(updatedTemplate.id, {
-            title: updatedTemplate.title,
-            duration: updatedTemplate.duration,
-            categoryId: updatedTemplate.categoryId,
-          });
-        }
-        this.templates[index] = updatedTemplate;
-        uiStore.showToast("Template saved", "success", 2500);
-        return true;
-      } catch (error) {
-        console.error("Failed to update template:", error);
-        uiStore.showToast(apiErrorMessage(error, "Couldn't save the template."), "error");
-        return false;
-      }
-    },
-
-    /**
-     * Fill `todayTasks` with the tasks starting on `day` (default: today in the user's zone),
-     * i.e. in `[start of day, start of next day)`. Uses its own loading/error flags.
-     */
-    async fetchTodayTasks(day: DateKey = todayKey()) {
-      const authStore = useAuthStore();
-      const range = dayRange(day);
-
-      if (!authStore.isAuthenticated) {
-        // GUEST: filter the local list. On a hard refresh this view can mount before App.vue
-        // has initialized the store, so load guest data first if needed.
-        if (!this.guestDataLoaded) this.loadGuestData();
-        this.todayTasks = this.tasks.filter((task) => isInRange(task.start, range));
-        this.todayTasksDay = day;
-        this.todayError = null;
+        uiStore.showToast("Invalid category selected for template.", "error");
         return;
       }
 
-      const seq = ++todayRequestSeq;
-      this.isLoadingToday = true;
-      this.todayError = null;
+      if (authStore.isAuthenticated) {
+        try {
+          // AUTHENTICATED: Call the API
+          const newTemplate = await apiDataService.createTaskTemplate(
+            templateData
+          );
+          this.templates.push(newTemplate);
+          uiStore.showToast("Template created successfully!", "success");
+        } catch (error) {
+          console.error("Failed to create template:", error);
+          uiStore.showToast(
+            "Could not create the template on the server.",
+            "error"
+          );
+        }
+      } else {
+        // GUEST: Manipulate local state
+        const newTemplate: TaskTemplate = {
+          ...templateData,
+          id: uuidv4(),
+          categoryName: category.name,
+          categoryColor: category.color,
+        };
+        this.templates.push(newTemplate);
+        uiStore.showToast("Template created successfully!", "success");
+      }
+    },
+
+    async deleteTemplate(templateId: string) {
+      const authStore = useAuthStore();
+      const uiStore = useUIStore();
+
+      if (authStore.isAuthenticated) {
+        try {
+          // AUTHENTICATED: Call the API
+          await apiDataService.deleteTaskTemplate(templateId);
+          // If successful, remove from local state
+          this.templates = this.templates.filter((t) => t.id !== templateId);
+          uiStore.showToast("Template deleted.", "info");
+        } catch (error) {
+          console.error("Failed to delete template:", error);
+          uiStore.showToast(
+            "Could not delete the template on the server.",
+            "error"
+          );
+        }
+      } else {
+        // GUEST: Manipulate local state
+        this.templates = this.templates.filter((t) => t.id !== templateId);
+        uiStore.showToast("Template deleted.", "info");
+      }
+    },
+
+    // ADDED: updateTemplate for completeness.
+    // The UI doesn't have an "edit template" feature yet, but the store should support it.
+    async updateTemplate(updatedTemplate: TaskTemplate) {
+      const authStore = useAuthStore();
+      const uiStore = useUIStore();
+      const index = this.templates.findIndex(
+        (t) => t.id === updatedTemplate.id
+      );
+      if (index === -1) return;
+
+      const templateDataForApi = {
+        title: updatedTemplate.title,
+        duration: updatedTemplate.duration,
+        categoryId: updatedTemplate.categoryId,
+      };
+
+      if (authStore.isAuthenticated) {
+        try {
+          await apiDataService.updateTaskTemplate(
+            updatedTemplate.id,
+            templateDataForApi
+          );
+          this.templates[index] = updatedTemplate;
+          uiStore.showToast("Template updated!", "success");
+        } catch (error) {
+          console.error("Failed to update template:", error);
+          uiStore.showToast(
+            "Could not update the template on the server.",
+            "error"
+          );
+        }
+      } else {
+        // GUEST:
+        this.templates[index] = updatedTemplate;
+        uiStore.showToast("Template updated!", "success");
+      }
+    },
+
+    async fetchTodayTasks() {
+      this.isLoading = true;
+      const authStore = useAuthStore();
+
       try {
-        // Filtered again in case an older backend returns a wider range.
-        const tasks = await apiDataService.getTasksForDay(day);
-        if (seq !== todayRequestSeq) return;
-        this.todayTasks = tasks.filter((task) => isInRange(task.start, range));
-        this.todayTasksDay = day;
+        if (authStore.isAuthenticated) {
+          // AUTHENTICATED: Fetch today's tasks from the API.
+          this.todayTasks = await apiDataService.getTasksForDay(dayjs());
+        } else {
+          // GUEST: Filter the main tasks list from localStorage.
+          const todayStart = dayjs().startOf("day");
+          const todayEnd = dayjs().endOf("day");
+          this.todayTasks = this.tasks.filter((task) =>
+            dayjs(task.start).isBetween(todayStart, todayEnd, null, "[]")
+          );
+        }
       } catch (error) {
-        if (seq !== todayRequestSeq) return;
         console.error("Failed to fetch today's tasks:", error);
-        this.todayError = TODAY_ERROR_MESSAGE;
+        useUIStore().showToast("Could not load today's tasks.", "error");
+        this.todayTasks = []; // Clear on error
       } finally {
-        if (seq === todayRequestSeq) this.isLoadingToday = false;
+        this.isLoading = false;
       }
     },
   },
-  // Pinia SSR-hydration hook (not invoked in this client-only app; guest data is loaded by
-  // initializeData/loadGuestData). Kept for parity with the original store.
-  hydrate(state) {
+  // ADDED: A way to connect the store to localStorage for guests
+  // This is a more advanced Pinia pattern that replaces the old $subscribe logic
+  // and keeps it neatly inside the store definition.
+  hydrate(state, initialState) {
     const authStore = useAuthStore();
+    // Only hydrate (load from local) if the user is a guest
     if (!authStore.isAuthenticated) {
       state.categories = localCategoryService.getCategories();
       state.templates = localTemplateService.getTemplates();
@@ -768,15 +518,14 @@ export const useTaskStore = defineStore("tasks", {
   },
 });
 
-/** Persist guest-mode changes to localStorage. */
+// A separate function to watch for guest-mode changes and save them
 export function setupTaskStoreSubscribers() {
   const taskStore = useTaskStore();
   const authStore = useAuthStore();
 
   taskStore.$subscribe((_mutation, state) => {
-    // Only save to localStorage if the user is a guest whose data has been loaded (never write
-    // an empty pre-load state over the stored data).
-    if (!authStore.isAuthenticated && state.guestDataLoaded) {
+    // Only save to localStorage if the user is a guest.
+    if (!authStore.isAuthenticated) {
       localTaskService.saveTasks(state.tasks);
       localTemplateService.saveTemplates(state.templates);
       localCategoryService.saveCategories(state.categories);

@@ -3,8 +3,6 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs;
-using TimePlanner.API.Exceptions;
-using TimePlanner.API.Features.Queries.Tasks;
 using TimePlanner.API.Services;
 
 namespace TimePlanner.API.Features.Commands.Tasks;
@@ -21,13 +19,11 @@ public class UpdateTaskCommandValidator : AbstractValidator<UpdateTaskCommand>
 {
     public UpdateTaskCommandValidator()
     {
-        RuleFor(x => x.Id).NotEmpty().WithMessage("Task id is required.");
-        RuleFor(x => x.Title).NotEmpty().WithMessage(TaskRules.TitleRequired); // no length limit (Tasks.Title is nvarchar(max))
-        RuleFor(x => x.Start).NotEmpty().WithMessage(TaskRules.StartRequired);
-        RuleFor(x => x.Duration)
-            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
-            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
-        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
+        RuleFor(x => x.Id).NotEmpty();
+        RuleFor(x => x.Title).NotEmpty();
+        RuleFor(x => x.Start).NotEmpty();
+        RuleFor(x => x.Duration).GreaterThan(0);
+        RuleFor(x => x.CategoryId).NotEmpty();
     }
 }
 
@@ -47,10 +43,9 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
         var userId = _currentUserService.UserId;
         if (userId == null) throw new UnauthorizedAccessException();
 
-        // 1. Retrieve the existing task and ensure ownership. Only personal tasks: organization tasks are
-        // changed through the organization endpoints, which apply the organization's rules.
+        // 1. Retrieve the existing task and ensure ownership
         var task = await _context.Tasks
-            .FirstOrDefaultAsync(t => t.Id == request.Id && t.UserId == userId && t.OrganizationId == null, cancellationToken);
+            .FirstOrDefaultAsync(t => t.Id == request.Id && t.UserId == userId, cancellationToken);
 
         if (task == null)
         {
@@ -65,11 +60,16 @@ public class UpdateTaskCommandHandler : IRequestHandler<UpdateTaskCommand>
             throw new ValidationException($"Category with ID {request.CategoryId} not found for this user.");
         }
 
-        // 3. Business Rule: Overlap Check against the user's planner (excluding the task being updated)
-        var newEnd = TaskOverlap.EndOf(request.Start, request.Duration);
-        await TaskOverlap.ThrowIfOverlapsAsync(
-            _context.Tasks.Where(PlannerScope.ForUser(_context, userId.Value)).Where(t => t.Id != request.Id),
-            request.Start, newEnd, "This time slot overlaps with an existing task.", cancellationToken);
+        // 3. Business Rule: Overlap Check (excluding the task being updated)
+        var newEnd = request.Start.AddHours(request.Duration);
+        var isOverlapping = await _context.Tasks
+            .Where(t => t.UserId == userId && t.Id != request.Id) // Exclude the current task
+            .AnyAsync(t => (request.Start < t.Start.AddHours(t.Duration)) && (t.Start < newEnd), cancellationToken);
+
+        if (isOverlapping)
+        {
+            throw new InvalidOperationException("This time slot overlaps with an existing task.");
+        }
 
         // 4. Update the entity
         task.Title = request.Title;

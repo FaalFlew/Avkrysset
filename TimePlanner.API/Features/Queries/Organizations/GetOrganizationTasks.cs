@@ -5,7 +5,6 @@ using TimePlanner.API.DTOs;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
-using TimePlanner.API.Features.Queries.Tasks;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
@@ -32,10 +31,17 @@ public class GetOrganizationTasksQueryHandler : IRequestHandler<GetOrganizationT
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        // Authorization: User must be an active member.
-        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
+        var membership = await _context.OrganizationMemberships
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId, cancellationToken);
 
-        bool isUserAdminOrOwner = AuthorizationExtensions.IsAdminOrOwnerRole(membership.Role);
+        // Authorization: User must be an active member.
+        if (membership == null || membership.Status != MembershipStatus.Active)
+        {
+            throw new UnauthorizedAccessException("You are not an active member of this organization.");
+        }
+
+        bool isUserAdminOrOwner = membership.Role == OrganizationRoles.Admin || membership.Role == OrganizationRoles.Owner;
 
         // --- Authorization Logic for Filtering ---
         Guid? targetMemberId = null;
@@ -56,7 +62,7 @@ public class GetOrganizationTasksQueryHandler : IRequestHandler<GetOrganizationT
             .AsNoTracking()
             .Where(t => t.OrganizationId == request.OrganizationId &&
                         t.Start >= request.StartDate &&
-                        t.Start < request.EndDate);
+                        t.Start < request.EndDate.AddDays(1));
 
         // If a specific member is targeted, we filter by their assignments.
         if (targetMemberId.HasValue)
@@ -66,12 +72,29 @@ public class GetOrganizationTasksQueryHandler : IRequestHandler<GetOrganizationT
 
         // Project the results into our DTO.
         var tasks = await query
+            .Include(t => t.Category)
+            .Include(t => t.Assignments)
+                .ThenInclude(a => a.Assignee) // Include User details for each assignee
             .OrderBy(t => t.Start)
-            .Select(TaskProjections.ToDto)
+            .Select(t => new TaskItemDto
+            {
+                Id = t.Id,
+                Title = t.Title,
+                Start = t.Start,
+                Duration = t.Duration,
+                CategoryId = t.CategoryId,
+                CategoryName = t.Category.Name,
+                CategoryColor = t.Category.Color,
+                OrganizationId = t.OrganizationId,
+                TemplateId = t.TemplateId, // Include templateId if it exists
+                Assignees = t.Assignments.Select(a => new TaskAssigneeDto
+                {
+                    UserId = a.AssigneeId,
+                    UserEmail = a.Assignee.Email!
+                }).ToList()
+            })
             .ToListAsync(cancellationToken);
 
-        TaskProjections.ApplyCapabilities(tasks, currentUserId.Value,
-            new Dictionary<Guid, string> { [request.OrganizationId] = membership.Role });
         return tasks;
     }
 }

@@ -7,7 +7,6 @@ using TimePlanner.API.Services;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using TimePlanner.API.Models.Organization;
-using TimePlanner.API.Data.Converters;
 namespace TimePlanner.API.Data;
 
 // We inherit from IdentityDbContext. This automatically sets up the DbSets
@@ -91,20 +90,8 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
         // We create a reusable lambda expression with an explicit type.
         Expression<Func<AuditableEntity, bool>> softDeleteFilter = e => !e.IsDeleted;
 
-        // All DateTime columns store UTC instants; this makes EF read them back with Kind=Utc
-        // (including nullable audit columns and the Identity tables).
-        var utcDateTimeConverter = new UtcDateTimeValueConverter();
-
         foreach (var entityType in builder.Model.GetEntityTypes())
         {
-            foreach (var property in entityType.GetProperties())
-            {
-                if (property.ClrType == typeof(DateTime) || property.ClrType == typeof(DateTime?))
-                {
-                    property.SetValueConverter(utcDateTimeConverter);
-                }
-            }
-
             if (typeof(AuditableEntity).IsAssignableFrom(entityType.ClrType))
             {
                 // To apply the filter, we need to build a new lambda expression
@@ -144,8 +131,6 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .WithOne(om => om.User)
                 .HasForeignKey(om => om.UserId)
                 .OnDelete(DeleteBehavior.Cascade); // If a user is deleted, their memberships are gone.
-
-            user.Property(u => u.DisplayName).HasMaxLength(100);
         });
 
 
@@ -201,10 +186,6 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
                 .WithOne(a => a.TaskItem)
                 .HasForeignKey(a => a.TaskItemId)
                 .OnDelete(DeleteBehavior.Cascade); // If a task is deleted, its assignments are deleted.
-
-            // Planner, analytics and overlap queries filter by owner/organization and a Start range.
-            task.HasIndex(t => new { t.UserId, t.Start });
-            task.HasIndex(t => new { t.OrganizationId, t.Start });
         });
 
         // --- Configure the TaskAssignment Entity ---
@@ -226,9 +207,6 @@ public class ApplicationDbContext : IdentityDbContext<User, IdentityRole<Guid>, 
         builder.Entity<Organization>(org =>
         {
             org.HasKey(o => o.Id);
-
-            // Existing organizations get UTC when the column is added.
-            org.Property(o => o.TimeZoneId).HasDefaultValue("UTC");
 
             // An organization must have a unique name.
             org.HasIndex(o => o.Name).IsUnique();

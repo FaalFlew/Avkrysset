@@ -1,7 +1,6 @@
 // src/types/index.ts
-import type { UtcIsoString } from "@/lib/datetime";
 
-// --- Authentication ---
+// --- ADDED SECTION for Authentication and Data Migration ---
 
 // Response from the backend's login/refresh endpoints
 export interface AuthResponse {
@@ -26,8 +25,7 @@ export interface TaskTemplateMigrationDto {
 
 export interface TaskItemMigrationDto {
   title: string;
-  /** Instant, normalized to `YYYY-MM-DDTHH:mm:ss.sssZ` before sending. */
-  start: UtcIsoString;
+  start: string; // ISO 8601 string
   duration: number;
   categoryId: string;
   templateId?: string;
@@ -39,71 +37,38 @@ export interface MigrationData {
   tasks: TaskItemMigrationDto[];
 }
 
-// --- Domain models (match the backend DTOs) ---
+// MODIFIED FILE: src/types/index.ts
 
+// MODIFICATION: Updated to match the backend's TaskItemDto
 export interface Task {
   id: string;
   title: string;
-  /**
-   * Start instant, always canonical UTC `YYYY-MM-DDTHH:mm:ss.sssZ` in memory
-   * (normalized by apiDataService / localDataService). Use `src/lib/datetime.ts` for any math.
-   */
-  start: UtcIsoString;
-  duration: number; // in hours (elapsed time)
+  start: string; // ISO 8601 string for date and time
+  duration: number; // in hours
   categoryId: string;
-  categoryName: string;
-  categoryColor: string;
+  categoryName: string; // ADDED
+  categoryColor: string; // ADDED
   templateId?: string; // Optional: to link back to a template
-
-  // --- Organization tasks in "my planner" (D7). Absent/empty for personal and guest tasks. ---
-  /** Organization the task belongs to; null/absent for personal tasks. */
-  organizationId?: string | null;
-  organizationName?: string | null;
-  /** Members the org task is assigned to (empty for personal tasks). */
-  assignees?: TaskAssignee[];
-  /** Who created the task (org tasks). */
-  createdBy?: TaskCreator | null;
-  /**
-   * What the current user may do (server-computed). Absent → personal defaults for personal
-   * tasks, read-only for org tasks (see src/lib/taskAccess.ts).
-   */
-  capabilities?: TaskCapabilities;
 }
 
-export interface TaskAssignee {
-  userId: string;
-  /** Display name, falling back to the email. */
-  displayName: string;
-  email: string;
-}
-
-export interface TaskCreator {
-  userId: string;
-  displayName: string;
-}
-
-export interface TaskCapabilities {
-  canEdit: boolean;
-  canDelete: boolean;
-  canReassign: boolean;
-}
-
+// MODIFICATION: Updated to match the backend's TaskTemplateDto
 export interface TaskTemplate {
   id: string;
   title: string;
   duration: number;
   categoryId: string;
-  categoryName: string;
-  categoryColor: string;
+  categoryName: string; // ADDED
+  categoryColor: string; // ADDED
 }
 
+// MODIFICATION: Updated to match the backend's CategoryDto
 export interface Category {
   id: string;
   name: string;
   color: string;
 }
 
-// --- API request payloads ---
+// --- ADDED SECTION for API Request Payloads ---
 export interface CreateCategoryRequest {
   name: string;
   color: string;
@@ -121,8 +86,7 @@ export type UpdateTaskTemplateRequest = CreateTaskTemplateRequest;
 
 export interface CreateTaskRequest {
   title: string;
-  /** Canonical UTC instant (`YYYY-MM-DDTHH:mm:ss.sssZ`). */
-  start: UtcIsoString;
+  start: string;
   duration: number;
   categoryId: string;
   templateId?: string;
@@ -131,11 +95,6 @@ export interface CreateTaskRequest {
 export type UpdateTaskRequest = CreateTaskRequest;
 
 export interface BreakdownDataPoint {
-  /**
-   * Bucket id in the user's zone: `"yyyy-MM"` (monthly), `"yyyy-Www"` (weekly, e.g. "2026-W05"),
-   * `"yyyy-MM-dd"` (daily). Absent on older backends: fall back to `label`.
-   */
-  key?: string;
   label: string;
   value: number;
   dominantCategoryColor: string;
@@ -161,3 +120,5 @@ export interface TaskAnalyticsResponse {
   timePerTemplate: TimePerTemplate[];
   breakdownData: BreakdownDataPoint[];
 }
+
+// ... existing migration and auth types ...

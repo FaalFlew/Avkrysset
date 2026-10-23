@@ -12,9 +12,6 @@ public class User : IdentityUser<Guid>
     public string? RefreshToken { get; set; }
     public DateTime RefreshTokenExpiryTime { get; set; }
 
-    // Optional name shown to other organization members; the email is shown when it's not set.
-    public string? DisplayName { get; set; }
-
     // Navigation properties for EF Core to link this user to their data.
     // When a user is loaded, EF Core can also load their related data.
     public ICollection<Category> Categories { get; set; } = new List<Category>();

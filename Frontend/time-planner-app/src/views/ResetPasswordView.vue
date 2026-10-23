@@ -1,22 +1,15 @@
+<!-- MODIFIED FILE: src/views/ResetPasswordView.vue -->
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { ref, onMounted, computed } from "vue"; // ADDED: computed
 import { useAuthStore } from "@/stores/authStore";
 import { useRouter, useRoute, RouterLink } from "vue-router";
-import { useUIStore } from "@/stores/uiStore";
-import { CircleCheck } from "lucide-vue-next";
-import AuthLayout from "@/components/auth/AuthLayout.vue";
-import PasswordField from "@/components/auth/PasswordField.vue";
-import PasswordRequirements from "@/components/auth/PasswordRequirements.vue";
-import { meetsPasswordRules } from "@/components/auth/passwordRules";
-import UiButton from "@/components/ui/UiButton.vue";
-
-const REQUIREMENTS_ID = "reset-password-requirements";
+import { useUIStore } from "@/stores/uiStore"; // ADDED: for showing error toasts
 
 const newPassword = ref("");
-const confirmPassword = ref("");
-const passwordVisible = ref(false); // one toggle shows/hides both fields
+const confirmPassword = ref(""); // ADDED: State for the confirm password field
+const passwordVisible = ref(false); // ADDED: State to toggle password visibility
 const authStore = useAuthStore();
-const uiStore = useUIStore();
+const uiStore = useUIStore(); // ADDED
 const router = useRouter();
 const route = useRoute();
 
@@ -24,19 +17,10 @@ const userId = ref("");
 const token = ref("");
 const passwordReset = ref(false);
 
-// Inline validation (replaces the old error toasts)
-const newPasswordError = ref("");
-const confirmError = ref("");
-const newPasswordField = ref<InstanceType<typeof PasswordField> | null>(null);
-const confirmField = ref<InstanceType<typeof PasswordField> | null>(null);
-const layout = ref<InstanceType<typeof AuthLayout> | null>(null);
-
-watch(newPassword, (value) => {
-  if (newPasswordError.value && meetsPasswordRules(value)) newPasswordError.value = "";
-});
-watch([newPassword, confirmPassword], ([pw, confirm]) => {
-  if (confirmError.value && pw === confirm) confirmError.value = "";
-});
+// ADDED: A computed property to determine the input type
+const passwordInputType = computed(() =>
+  passwordVisible.value ? "text" : "password"
+);
 
 onMounted(() => {
   userId.value = route.query.userId as string;
@@ -48,18 +32,15 @@ onMounted(() => {
 });
 
 async function handleReset() {
-  newPasswordError.value = "";
-  confirmError.value = "";
-
-  if (!meetsPasswordRules(newPassword.value)) {
-    newPasswordError.value = "Your password doesn't meet the requirements yet.";
-    newPasswordField.value?.focus();
-    return;
+  // --- ADDED: Validation for matching passwords ---
+  if (newPassword.value !== confirmPassword.value) {
+    uiStore.showToast("Passwords do not match. Please try again.", "error");
+    return; // Stop execution if passwords don't match
   }
 
-  if (newPassword.value !== confirmPassword.value) {
-    confirmError.value = "Passwords don't match.";
-    confirmField.value?.focus();
+  // Also good to check for password length, though the backend will do it.
+  if (newPassword.value.length < 8) {
+    uiStore.showToast("Password must be at least 8 characters long.", "error");
     return;
   }
 
@@ -70,64 +51,85 @@ async function handleReset() {
   });
   if (success) {
     passwordReset.value = true;
-    await nextTick();
-    layout.value?.focusHeading();
   }
+}
+
+// ADDED: Function to toggle password visibility
+function togglePasswordVisibility() {
+  passwordVisible.value = !passwordVisible.value;
 }
 </script>
 
 <template>
-  <AuthLayout v-if="passwordReset" ref="layout" title="Password updated" tone="success" centered>
-    <template #icon><CircleCheck :size="20" /></template>
-    <p class="auth-text">You can now log in with your new password.</p>
-    <div class="auth-actions">
-      <UiButton to="/login" variant="primary" size="lg" block>Log in</UiButton>
-    </div>
-  </AuthLayout>
+  <div class="auth-container">
+    <h2>Reset Your Password</h2>
 
-  <AuthLayout v-else ref="layout" title="Choose a new password" subtitle="Pick something you haven't used here before.">
-    <form class="auth-form" @submit.prevent="handleReset">
-      <div class="auth-field-group">
-        <PasswordField
-          ref="newPasswordField"
+    <div v-if="passwordReset">
+      <p>Your password has been changed successfully.</p>
+      <RouterLink to="/login" class="btn-primary">Proceed to Login</RouterLink>
+    </div>
+
+    <form v-else @submit.prevent="handleReset" class="auth-form">
+      <p>Enter and confirm your new password below.</p>
+
+      <div class="form-group password-input-wrapper">
+        <label for="newPassword">New Password</label>
+        <input
+          :type="passwordInputType"
+          id="newPassword"
           v-model="newPassword"
-          v-model:visible="passwordVisible"
-          label="New password"
-          name="new-password"
-          autocomplete="new-password"
-          :error="newPasswordError"
-          :aria-describedby="REQUIREMENTS_ID"
           required
         />
-        <PasswordRequirements :id="REQUIREMENTS_ID" :password="newPassword" />
+        <!-- MODIFICATION: Replaced <span> with <i> for Font Awesome icon -->
+        <i
+          @click="togglePasswordVisibility"
+          class="password-toggle-icon fa-solid"
+          :class="passwordVisible ? 'fa-eye-slash' : 'fa-eye'"
+        ></i>
       </div>
 
-      <PasswordField
-        ref="confirmField"
-        v-model="confirmPassword"
-        v-model:visible="passwordVisible"
-        label="Confirm password"
-        name="confirm-password"
-        autocomplete="new-password"
-        :show-toggle="false"
-        :error="confirmError"
-        required
-      />
+      <div class="form-group password-input-wrapper">
+        <label for="confirmPassword">Confirm New Password</label>
+        <input
+          :type="passwordInputType"
+          id="confirmPassword"
+          v-model="confirmPassword"
+          required
+        />
+      </div>
 
-      <UiButton
+      <button
         type="submit"
-        variant="primary"
-        size="lg"
-        block
-        class="auth-submit"
-        :loading="authStore.authStatus === 'loading'"
+        class="btn-primary"
+        :disabled="authStore.authStatus === 'loading'"
       >
-        {{ authStore.authStatus === "loading" ? "Updating…" : "Update password" }}
-      </UiButton>
+        {{
+          authStore.authStatus === "loading" ? "Resetting..." : "Reset Password"
+        }}
+      </button>
     </form>
-
-    <template #footer>
-      <p><RouterLink to="/login">Back to log in</RouterLink></p>
-    </template>
-  </AuthLayout>
+  </div>
 </template>
+
+<style scoped>
+@import "@/assets/authFormStyle";
+
+.password-input-wrapper {
+  position: relative;
+}
+
+.password-toggle-icon {
+  position: absolute;
+  top: 70%;
+  right: 15px;
+  transform: translateY(-50%);
+  cursor: pointer;
+  user-select: none;
+  /* MODIFICATION: Style the icon element */
+  color: #aaa;
+  font-size: 1rem; /* Adjust size as needed */
+}
+.password-toggle-icon:hover {
+  color: #333;
+}
+</style>

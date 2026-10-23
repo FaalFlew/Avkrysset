@@ -1,234 +1,233 @@
+<template>
+  <header class="app-header">
+    <div class="logo">
+      <RouterLink to="/">Time Planner</RouterLink>
+    </div>
+    <nav class="main-nav">
+      <!-- Show different links based on authentication status -->
+      <template v-if="authStore.isAuthenticated">
+        <RouterLink to="/">Planner</RouterLink>
+        <RouterLink to="/today">Today</RouterLink>
+        <button @click="handleLogout" class="btn-secondary">Logout</button>
+      </template>
+      <template v-else>
+        <RouterLink to="/today">Today</RouterLink>
+        <RouterLink to="/login">Login</RouterLink>
+      </template>
+    </nav>
+  </header>
+
+  <!-- The router will render the current page component here -->
+  <main class="main-content">
+    <RouterView />
+  </main>
+
+  <!-- Global components that should be available on all pages -->
+  <ToastNotification />
+  <ConfirmDialog />
+</template>
+
 <script setup lang="ts">
-/**
- * App shell. Auth routes (meta.layout = 'auth') render bare (their views bring AuthLayout);
- * everything else gets: skip link, sidebar/rail (≥ 768) or bottom tab bar (< 768), <main>,
- * the mobile FAB, and the global overlays (task editor, shortcuts, toast, confirm).
- */
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
-import { storeToRefs } from "pinia";
-import { Plus } from "lucide-vue-next";
+import { ref, computed } from "vue";
+import WeekView from "./components/WeekView.vue";
+import TaskTemplateManager from "./components/TaskTemplateManager.vue";
+import TaskAnalytics from "./components/TaskAnalytics.vue";
 import ToastNotification from "./components/ToastNotification.vue";
-import ConfirmDialog from "./components/ConfirmDialog.vue";
-import TaskEditor from "./components/TaskEditor.vue";
-import ShortcutsDialog from "./components/ShortcutsDialog.vue";
-import AppSidebar from "./components/shell/AppSidebar.vue";
-import AppTabBar from "./components/shell/AppTabBar.vue";
-import SidebarDrawer from "./components/shell/SidebarDrawer.vue";
-import { NAV_ITEMS } from "./components/shell/navItems";
-import { useShell } from "./components/shell/useShell";
-import { useAuthStore } from "./stores/authStore";
-import { useTaskStore } from "./stores/taskStore";
-import { useUIStore } from "./stores/uiStore";
-import { useBreakpoint } from "./composables/useMediaQuery";
-import { useTaskEditor } from "./composables/useTaskEditor";
-import { installHotkeys, type HotkeyMap } from "./composables/useHotkeys";
-import { useTimeZone } from "./composables/useClock";
-import { weekDaysOf, weekRange } from "@/lib/datetime";
+import ConfirmDialog from "./components/ConfirmDialog.vue"; // <-- Import it
+import { RouterLink, RouterView, useRouter } from "vue-router"; // ADDED Router components
+import { useAuthStore } from "./stores/authStore"; // ADDED
+import { useTaskStore } from "./stores/taskStore"; // ADDED
+import { onMounted } from "vue"; // ADDED
 
-const uiStore = useUIStore();
-const authStore = useAuthStore();
-const taskStore = useTaskStore();
-const route = useRoute();
-const router = useRouter();
-const editor = useTaskEditor();
-const { isMobile, isTablet, isDesktop, isCoarse } = useBreakpoint();
-const { sidebarMode, toggleSidebar } = useShell();
+import { useUIStore } from "./stores/uiStore"; // ADDED
+import { watch } from "vue"; // MODIFIED: Imported watch
+import { storeToRefs } from "pinia"; // ADDED
+import dayjs from "dayjs"; // ADDED
+
+type View = "planner" | "templates" | "analytics";
+
+const uiStore = useUIStore(); // ADDED
+const authStore = useAuthStore(); // ADDED
+const taskStore = useTaskStore(); // ADDED
+const router = useRouter(); // ADDED
+// ADDED: Create reactive references to the state we need to watch.
 const { isAuthenticated } = storeToRefs(authStore);
-const { currentDate, announcement } = storeToRefs(uiStore);
-const { timeZone } = useTimeZone();
+const { currentDate } = storeToRefs(uiStore);
+const currentView = ref<View>("planner");
 
-/** Nothing is rendered until the first route resolves (so auth pages never flash the shell). */
-const isReady = computed(() => route.matched.length > 0);
-const isAuthLayout = computed(() => route.meta.layout === "auth");
-const isPlanner = computed(() => route.name === "Planner");
-const showFab = computed(
-  () => isMobile.value && (route.name === "Planner" || route.name === "Today") && !editor.state.open
-);
-
-// ---------------------------------------------------------------- data loading
-// Monday (DateKey) of the selected ISO week: tasks are refetched only when the week changes
-// (switching days inside a week on phones does not refetch).
-const currentWeekStart = computed(() => weekDaysOf(currentDate.value)[0]!);
-
-onMounted(() => {
-  // Guests: load local data. Signed-in users are handled by the watcher below.
-  if (!isAuthenticated.value) void taskStore.initializeData();
+// MODIFICATION: The onMounted hook is now simpler.
+onMounted(async () => {
+  // If the user is NOT authenticated, this will load their local data.
+  // If they are authenticated, this will do nothing, because the watcher will handle it.
+  if (!isAuthenticated.value) {
+    await taskStore.initializeData();
+  }
 });
 
-// Signed in: load categories & templates on login/start, and the selected week's tasks
-// whenever the week changes. Signed out (logout, expired session): back to guest data.
-// A device time-zone change also refetches: the same week starts at a different instant.
+// --- MODIFIED: The central data fetching watcher is now smarter ---
 watch(
-  [isAuthenticated, currentWeekStart, timeZone],
-  async ([isAuth, weekStart], [wasAuth]) => {
-    if (!isAuth) {
-      if (wasAuth) await taskStore.initializeData();
-      return;
+  [isAuthenticated, currentDate],
+  async ([isAuth, date], [wasAuth, oldDate]) => {
+    // ADDED previous values
+
+    // This watcher now handles two cases:
+    // 1. The user just logged IN.
+    // 2. The user is already logged in and changed the date.
+
+    // Only proceed if the user is authenticated.
+    if (isAuth) {
+      // Check if this is the initial fetch after logging in.
+      // `wasAuth` will be `false` if the user just transitioned from guest to logged in.
+      const isInitialFetch = !wasAuth;
+
+      if (isInitialFetch) {
+        // --- THIS IS THE CORE FIX ---
+        // On the very first fetch after login, we get EVERYTHING in order.
+        await taskStore.initializeData(); // This fetches categories & templates
+      }
+
+      // Now, whether it's the initial fetch OR a date change, get the tasks for the current week.
+      const weekStart = dayjs(date).startOf("isoWeek").toISOString();
+      const weekEnd = dayjs(date).endOf("isoWeek").toISOString();
+      await taskStore.fetchTasksForRange(weekStart, weekEnd);
     }
-    if (!wasAuth) await taskStore.initializeData();
-    // Half-open [Monday 00:00, next Monday 00:00) in the user's zone.
-    await taskStore.fetchTasksForRange(weekRange(weekStart));
   },
   { immediate: true }
 );
 
-// ---------------------------------------------------------------- hotkeys
-function guard(fn: () => unknown): () => boolean | void {
-  return () => {
-    if (isAuthLayout.value) return false;
-    fn();
-  };
-}
-
-const globalKeys: HotkeyMap = {
-  n: guard(() => editor.openCreate()),
-  c: guard(() => editor.openCreate()),
-  "[": () => {
-    if (isAuthLayout.value || !isDesktop.value) return false;
-    toggleSidebar();
-  },
-  "?": () => {
-    if (isAuthLayout.value || isCoarse.value) return false;
-    uiStore.openShortcuts();
-  },
+const components = {
+  planner: WeekView,
+  templates: TaskTemplateManager,
+  analytics: TaskAnalytics,
 };
-for (const item of NAV_ITEMS) {
-  globalKeys[item.shortcut] = guard(() => router.push(item.to));
+
+// ADDED: Logout handler
+async function handleLogout() {
+  await authStore.logout();
+  // After logout, re-initialize the taskStore to load guest data
+  await taskStore.initializeData();
+  // Redirect to the login page
+  router.push("/login");
 }
 
-let uninstallHotkeys: (() => void) | null = null;
-onMounted(() => {
-  uninstallHotkeys = installHotkeys(globalKeys, () => uiStore.runToastUndo());
-});
-onBeforeUnmount(() => uninstallHotkeys?.());
-
-// Toast pause on hover/focus is handled by ToastNotification itself (uiStore.pauseToast/resumeToast).
-
-// ---------------------------------------------------------------- skip link
-function skipToContent(): void {
-  const main = document.getElementById("main");
-  const target = main?.querySelector<HTMLElement>("[data-page-heading]") ?? main;
-  target?.focus();
-}
+const activeComponent = computed(() => components[currentView.value]);
 </script>
 
-<template>
-  <template v-if="isReady">
-    <RouterView v-if="isAuthLayout" />
-    <div v-else class="app-shell" :class="`app-shell--${sidebarMode}`">
-      <a href="#main" class="skip-link" @click.prevent="skipToContent">Skip to content</a>
-
-      <div v-if="sidebarMode !== 'hidden'" class="app-shell__sidebar">
-        <AppSidebar :variant="sidebarMode === 'expanded' ? 'expanded' : 'rail'" @toggle="toggleSidebar" />
-      </div>
-
-      <main id="main" class="app-shell__main" :class="{ 'is-planner': isPlanner }" tabindex="-1">
-        <!-- Keyed on the time zone: if the device zone changes (travel), the page remounts so every
-             position/label is recomputed and Today/Analytics refetch on mount. -->
-        <RouterView :key="timeZone" />
-      </main>
-
-      <AppTabBar v-if="isMobile" />
-
-      <Transition name="fab">
-        <button
-          v-if="showFab"
-          type="button"
-          class="fab"
-          :class="{ 'fab--raised': uiStore.toast.isVisible }"
-          aria-label="New task"
-          @click="editor.openCreate()"
-        >
-          <Plus :size="24" />
-        </button>
-      </Transition>
-    </div>
-
-    <SidebarDrawer v-if="isTablet && !isAuthLayout" />
-  </template>
-
-  <!-- Global overlays (teleported to <body>) -->
-  <TaskEditor />
-  <ShortcutsDialog />
-  <ToastNotification />
-  <ConfirmDialog />
-  <Teleport to="body">
-    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ announcement }}</div>
-  </Teleport>
-</template>
-
-<style scoped>
-.app-shell {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  height: 100vh;
-  height: 100dvh;
-  min-height: 0;
-  background-color: var(--bg-app);
-}
-.app-shell--hidden {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.app-shell__sidebar {
+<style>
+#app-container {
   display: flex;
-  min-height: 0;
-  border-right: 1px solid var(--border-subtle);
-  background-color: var(--bg-sidebar);
-}
-
-.app-shell__main {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  outline: none;
-  background-color: var(--bg-app);
-}
-.app-shell__main.is-planner {
+  flex-direction: column;
+  height: 100vh;
   overflow: hidden;
 }
-@media (max-width: 767.98px) {
-  .app-shell__main {
-    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 2rem;
+  background-color: white;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  /* Add a shrink factor to allow the title to get smaller if needed */
+  flex-shrink: 1;
+}
+
+.app-header nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.app-header nav button {
+  padding: 1rem 1.5rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  font-size: 1rem;
+  color: #555;
+  transition: all 0.2s ease-in-out;
+  /* Prevent buttons from shrinking */
+  flex-shrink: 0;
+  white-space: nowrap; /* Prevent text from wrapping */
+}
+
+.app-header nav button.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+.app-main {
+  flex-grow: 1;
+  overflow-y: auto;
+  background-color: var(--background-color);
+}
+
+/* --- NEW: Media Query for Mobile Responsiveness --- */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 0 0.5rem; /* Reduce horizontal padding */
+    gap: 0.5rem; /* Add gap between title and nav */
+  }
+
+  .app-header h1 {
+    font-size: 1rem; /* Smaller title */
+  }
+
+  .app-header nav {
+    gap: 0; /* Remove gap as padding will handle spacing */
+  }
+
+  .app-header nav button {
+    padding: 0.8rem 0.5rem; /* Significantly reduce padding */
+    font-size: 0.8rem; /* Smaller font size for buttons */
   }
 }
 
-/* ---------- FAB (phones, Planner/Today) ---------- */
-.fab {
-  position: fixed;
-  right: var(--space-4);
-  bottom: calc(var(--tabbar-h) + var(--space-4) + env(safe-area-inset-bottom, 0px));
-  z-index: var(--z-sticky);
-  display: inline-flex;
+/* ADDED Styles for the main app layout */
+.app-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-full);
-  background-color: var(--accent);
-  color: var(--text-on-accent);
-  box-shadow: var(--shadow-md);
-  transition: transform var(--dur-base) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  padding: 1rem 2rem;
+  background-color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid #e0e0e0;
 }
-.fab:hover {
-  background-color: var(--accent-hover);
+
+.logo a {
+  font-weight: bold;
+  font-size: 1.5rem;
+  text-decoration: none;
+  color: var(--font-color);
 }
-.fab:active {
-  background-color: var(--accent-active);
+
+.main-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
 }
-/* Keep clear of a visible toast (it sits just above the tab bar). */
-.fab--raised {
-  transform: translateY(-56px);
+
+.main-nav a,
+.main-nav button {
+  text-decoration: none;
+  font-weight: 500;
+  color: var(--font-color);
+  font-size: 1rem;
 }
-.fab-enter-active,
-.fab-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+
+.main-nav .router-link-active {
+  color: var(--primary-color);
 }
-.fab-enter-from,
-.fab-leave-to {
-  opacity: 0;
-  transform: scale(0.9);
+
+.main-content {
+  flex-grow: 1;
+  padding: 1rem;
+  overflow: auto;
 }
 </style>

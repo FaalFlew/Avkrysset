@@ -12,7 +12,6 @@ using Microsoft.Extensions.DependencyInjection;
 namespace TimePlanner.API.Features.Commands.Auth;
 
 using Microsoft.AspNetCore.WebUtilities; // Add this
-using System.Globalization;
 using System.Text; // Add this
 
 //================================================================================
@@ -36,14 +35,11 @@ public class RegisterCommandValidator : AbstractValidator<RegisterCommand>
 
     public RegisterCommandValidator()
     {
-        // These rules match the Identity options in Program.cs (ASCII letter/digit classes like Identity's
-        // PasswordValidator), so they reject nothing Identity would accept; they only give clearer messages.
-        // Migration data is deliberately not validated: the migration code tolerates odd guest data.
-        RuleFor(x => x.Email).Cascade(CascadeMode.Stop)
+        RuleFor(x => x.Email)
             .NotEmpty().WithMessage("Email is required.")
             .EmailAddress().WithMessage("A valid email address is required.");
 
-        RuleFor(x => x.Password).Cascade(CascadeMode.Stop)
+        RuleFor(x => x.Password)
             .NotEmpty().WithMessage("Password is required.")
             .MinimumLength(8).WithMessage("Password must be at least 8 characters long.")
             // Example of a more complex password rule
@@ -61,9 +57,6 @@ public class RegisterCommandValidator : AbstractValidator<RegisterCommand>
 // It depends on the services it needs, which are provided by DI.
 public class RegisterCommandHandler : IRequestHandler<RegisterCommand>
 {
-    // Every account gets this category at registration; guest items without a migrated category land in it.
-    private const string DefaultCategoryName = "Other";
-
     private readonly ILogger<RegisterCommandHandler> _logger;
     private readonly UserManager<User> _userManager;
     private readonly ApplicationDbContext _context; // 1. Inject the factory
@@ -127,12 +120,11 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand>
             throw new ValidationException(errors);
         }
         _logger.LogInformation("User with email {Email} created successfully.", request.Email);
-        Category otherCategory;
         try
         {
-            otherCategory = new Category
+            var otherCategory = new Category
             {
-                Name = DefaultCategoryName,
+                Name = "Other",
                 Color = "#8B949E", // A neutral grey color
                 UserId = user.Id
             };
@@ -153,24 +145,14 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand>
 
         // --- 3. Data Migration ---
 
-        // A guest who only used the default "Other" category sends no categories (the client leaves "Other" out),
-        // so any guest data at all must trigger the migration.
-        if (request.MigrationData != null && HasAnyData(request.MigrationData))
+        if (request.MigrationData != null && request.MigrationData.Categories.Any())
         {
-            var otherCategoryId = otherCategory.Id;
+            // The transaction is now on the handler's single context.
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             try
             {
-                // The context uses a retrying execution strategy (EnableRetryOnFailure), which rejects a
-                // user-initiated transaction unless the whole unit runs inside the strategy.
-                var strategy = _context.Database.CreateExecutionStrategy();
-                await strategy.ExecuteAsync(async () =>
-                {
-                    // A retried attempt must not see entities left over from a rolled-back one.
-                    _context.ChangeTracker.Clear();
-                    await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-                    await MigrateUserDataAsync(user.Id, otherCategoryId, request.MigrationData, _context, cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-                });
+                await MigrateUserDataAsync(user.Id, request.MigrationData, _context, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
                 _logger.LogInformation("Successfully migrated local data for user {Email}.", request.Email);
             }
             catch (Exception ex)
@@ -212,153 +194,100 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand>
         _logger.LogInformation("Confirmation email sent to {Email}", user.Email);
     }
 
-    private static bool HasAnyData(MigrationData data) =>
-        (data.Categories?.Count ?? 0) + (data.Templates?.Count ?? 0) + (data.Tasks?.Count ?? 0) > 0;
-
     private async Task MigrateUserDataAsync(
     Guid userId,
-    Guid otherCategoryId,
     MigrationData data,
     ApplicationDbContext context,
     CancellationToken ct)
     {
-        var categoryDtos = data.Categories ?? new List<CategoryMigrationDto>();
-        var templateDtos = data.Templates ?? new List<TaskTemplateMigrationDto>();
-        var taskDtos = data.Tasks ?? new List<TaskItemMigrationDto>();
+        // Step 1 & 2: Categories and Templates (Save and Map) - These parts are correct and remain unchanged.
+        // ... (logic for saving categories and templates and creating categoryIdMap and templateIdMap) ...
+        // --- Assume categoryIdMap and templateIdMap are correctly populated here ---
 
-        // --- Step 1: Categories ---
-        // Maps guest category ids to the new Guids. A guest category whose name already exists (the guest's
-        // own "Other", or a repeated name) maps onto that category instead of breaking the unique
-        // (UserId, Name) index. Names compare like the database does: case-insensitive, trailing spaces ignored.
-        var categoryIdMap = new Dictionary<string, Guid>(StringComparer.Ordinal);
-        var categoryIdsByName = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
+        var categoryPairs = new List<(CategoryMigrationDto Dto, Category Entity)>();
+        foreach (var catDto in data.Categories)
         {
-            [DefaultCategoryName] = otherCategoryId
-        };
-        var categoriesCreated = 0;
-        foreach (var catDto in categoryDtos)
-        {
-            var nameKey = (catDto.Name ?? string.Empty).Trim();
-            if (!categoryIdsByName.TryGetValue(nameKey, out var categoryId))
-            {
-                var newCategory = new Category { Name = catDto.Name ?? string.Empty, Color = catDto.Color, UserId = userId };
-                context.Categories.Add(newCategory); // the Guid key is generated here, on Add
-                categoryId = newCategory.Id;
-                categoryIdsByName[nameKey] = categoryId;
-                categoriesCreated++;
-            }
-
-            categoryIdMap.TryAdd(catDto.Id ?? string.Empty, categoryId);
+            var newCategory = new Category { Name = catDto.Name, Color = catDto.Color, UserId = userId };
+            categoryPairs.Add((catDto, newCategory));
         }
+        context.Categories.AddRange(categoryPairs.Select(p => p.Entity));
         await context.SaveChangesAsync(ct);
+        var categoryIdMap = categoryPairs.ToDictionary(p => p.Dto.Id, p => p.Entity.Id);
 
-        // Items whose category was not sent go to the default "Other" category. The client never sends the
-        // guest's "Other" (the account already has one), so this is the normal path for those items.
-        var movedToOther = 0;
-        Guid ResolveCategory(string? guestCategoryId)
+        var templatePairs = new List<(TaskTemplateMigrationDto Dto, TaskTemplate Entity)>();
+        foreach (var templateDto in data.Templates)
         {
-            if (guestCategoryId is not null && categoryIdMap.TryGetValue(guestCategoryId, out var mapped))
+            if (categoryIdMap.TryGetValue(templateDto.CategoryId, out var newCategoryId))
             {
-                return mapped;
-            }
-
-            movedToOther++;
-            return otherCategoryId;
-        }
-
-        // --- Step 2: Templates (every template is migrated) ---
-        var templatesByGuestId = new Dictionary<string, (Guid Id, Guid CategoryId, TaskTemplateMigrationDto Dto)>(StringComparer.Ordinal);
-        foreach (var templateDto in templateDtos)
-        {
-            var newTemplate = new TaskTemplate
-            {
-                Title = templateDto.Title,
-                Duration = templateDto.Duration,
-                CategoryId = ResolveCategory(templateDto.CategoryId),
-                UserId = userId
-            };
-            context.TaskTemplates.Add(newTemplate);
-            if (!string.IsNullOrEmpty(templateDto.Id))
-            {
-                templatesByGuestId.TryAdd(templateDto.Id, (newTemplate.Id, newTemplate.CategoryId, templateDto));
+                var newTemplate = new TaskTemplate { Title = templateDto.Title, Duration = templateDto.Duration, CategoryId = newCategoryId, UserId = userId };
+                templatePairs.Add((templateDto, newTemplate));
             }
         }
+        context.TaskTemplates.AddRange(templatePairs.Select(p => p.Entity));
         await context.SaveChangesAsync(ct);
+        var templateIdMap = templatePairs.ToDictionary(p => p.Dto.Id, p => p.Entity.Id);
 
-        // --- Step 3: Tasks ---
+
+        // --- Step 3: Handle Tasks (with corrected inheritance logic) ---
         var tasksToAdd = new List<TaskItem>();
-        var unreadableStarts = 0;
-        foreach (var taskDto in taskDtos)
-        {
-            if (!TryParseMigratedStart(taskDto.Start, out var start))
-            {
-                unreadableStarts++;
-                _logger.LogWarning("Skipping a migrated task with an unreadable start value '{Start}'.", taskDto.Start);
-                continue;
-            }
 
-            if (!string.IsNullOrEmpty(taskDto.TemplateId) && templatesByGuestId.TryGetValue(taskDto.TemplateId, out var template))
+        // For easier lookup, let's create a dictionary of the template DTOs by their old ID.
+        // This is the key piece to access the template's original properties.
+        var templateDtoMap = data.Templates.ToDictionary(t => t.Id);
+
+        foreach (var taskDto in data.Tasks)
+        {
+            string title;
+            double duration;
+            Guid categoryId;
+            Guid? templateId = null;
+
+            // Check if the task is derived from a template. This is the corrected block.
+            if (!string.IsNullOrEmpty(taskDto.TemplateId) &&
+                templateDtoMap.TryGetValue(taskDto.TemplateId, out var foundTemplateDto) && // 1. Find the DTO
+                templateIdMap.TryGetValue(taskDto.TemplateId, out var newTemplateGuid))     // 2. Find the new Guid
             {
                 // --- INHERITANCE LOGIC ---
-                // The task is from a template: it inherits the template's title, duration and category.
-                tasksToAdd.Add(new TaskItem
+                // The task is from a template. Inherit its properties from the DTO.
+                title = foundTemplateDto.Title;
+                duration = foundTemplateDto.Duration;
+
+                // We still need the real category Guid from the category map.
+                if (!categoryIdMap.TryGetValue(foundTemplateDto.CategoryId, out categoryId))
                 {
-                    Title = template.Dto.Title,
-                    Start = start,
-                    Duration = template.Dto.Duration,
-                    CategoryId = template.CategoryId,
-                    TemplateId = template.Id,
-                    UserId = userId
-                });
+                    // Data corruption from the frontend. Skip this task.
+                    continue;
+                }
+                templateId = newTemplateGuid; // Set the real template Guid
             }
             else
             {
                 // --- AD-HOC TASK LOGIC ---
-                tasksToAdd.Add(new TaskItem
+                // This is a regular, non-templated task. Use its own properties.
+                title = taskDto.Title;
+                duration = taskDto.Duration;
+
+                if (!categoryIdMap.TryGetValue(taskDto.CategoryId, out categoryId))
                 {
-                    Title = taskDto.Title,
-                    Start = start,
-                    Duration = taskDto.Duration,
-                    CategoryId = ResolveCategory(taskDto.CategoryId),
-                    UserId = userId
-                });
+                    // Category not found, skip this task.
+                    continue;
+                }
             }
+
+            // Now, create the TaskItem with the correctly sourced properties.
+            tasksToAdd.Add(new TaskItem
+            {
+                Title = title,
+                Start = DateTime.Parse(taskDto.Start, null, System.Globalization.DateTimeStyles.RoundtripKind),
+                Duration = duration,
+                CategoryId = categoryId,
+                TemplateId = templateId,
+                UserId = userId
+            });
         }
 
         // --- Step 4: Final Save for Tasks ---
         context.Tasks.AddRange(tasksToAdd);
         await context.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "Guest data migration for user {UserId}: {CategoriesCreated} of {CategoriesSent} categories created " +
-            "(the rest merged into existing ones), {Templates} templates, {TasksMigrated}/{TasksSent} tasks; " +
-            "{MovedToOther} templates/tasks without a sent category put in '{Other}'.",
-            userId, categoriesCreated, categoryDtos.Count, templateDtos.Count,
-            tasksToAdd.Count, taskDtos.Count, movedToOther, DefaultCategoryName);
-
-        if (unreadableStarts > 0)
-        {
-            _logger.LogWarning(
-                "Guest data migration for user {UserId}: {Skipped} of {TasksSent} tasks were not migrated because their start could not be read.",
-                userId, unreadableStarts, taskDtos.Count);
-        }
-    }
-
-    /// <summary>
-    /// Parses a guest task start into a UTC instant. The client sends UTC ISO strings
-    /// ("2026-10-03T07:00:00.000Z"); a value with an offset is converted, one without is taken as UTC.
-    /// Parsing is culture-independent so the server's culture cannot change the result.
-    /// </summary>
-    public static bool TryParseMigratedStart(string? value, out DateTime utcStart)
-    {
-        if (!string.IsNullOrWhiteSpace(value)
-            && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
-        {
-            utcStart = parsed.UtcDateTime;
-            return true;
-        }
-
-        utcStart = default;
-        return false;
     }
 }
