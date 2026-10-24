@@ -281,7 +281,7 @@ public sealed class OrganizationRulesTests
 
         await OrgTestKit.CreateOrgTaskAsync(org.Owner, org.OrgId, "Pair up", "2026-10-23T08:00:00.000Z", 2, org.Member);
         var analytics = await OrgTestKit.ReadJsonAsync(
-            await org.Owner.Client.GetAsync($"/api/organizations/{org.OrgId}/analytics?startDate=2026-10-19T00:00:00.000Z&endDate=2026-10-26T00:00:00.000Z"),
+            await org.Owner.Client.GetAsync($"/api/organizations/{org.OrgId}/analytics?view=weekly&year=2026&from=43&to=43"),
             HttpStatusCode.OK);
         Assert.Contains(analytics.GetProperty("timePerMember").EnumerateArray(), m => m.GetProperty("displayName").GetString() == "Grace");
 

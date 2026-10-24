@@ -316,22 +316,31 @@ public class OrganizationsController : ControllerBase
         return NoContent();
     }
 
+    // Selection like reports: view=monthly|weekly|daily&year&from&to (monthly: calendar year + month indexes 0-11;
+    // weekly/daily: ISO week-year + ISO weeks, daily from == to). Resolved and bucketed in the ORGANIZATION's zone;
+    // the X-Time-Zone header is ignored.
     [HttpGet("{organizationId:guid}/analytics")]
     [ProducesResponseType(typeof(OrganizationAnalyticsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetOrganizationAnalytics(
         [FromRoute] Guid organizationId,
-        [FromQuery] DateTime startDate,
-        [FromQuery] DateTime endDate)
+        [FromQuery] string? view, [FromQuery] int? year, [FromQuery] int? from, [FromQuery] int? to)
     {
-        if (startDate >= endDate)
-        {
-            throw new BadRequestException("The start date must be before the end date.");
-        }
+        var result = await _mediator.Send(new GetOrganizationAnalyticsQuery(organizationId, view, year, from, to));
+        return Ok(result);
+    }
 
-        var query = new GetOrganizationAnalyticsQuery(organizationId, startDate, endDate);
-        var result = await _mediator.Send(query);
+    // Calendar years (organization zone) with organization tasks - for a member, tasks assigned to them - newest first.
+    [HttpGet("{organizationId:guid}/analytics/years")]
+    [ProducesResponseType(typeof(List<int>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetOrganizationYears(Guid organizationId)
+    {
+        var result = await _mediator.Send(new GetOrganizationYearsQuery(organizationId));
         return Ok(result);
     }
 
@@ -465,24 +474,19 @@ public class OrganizationsController : ControllerBase
         return NoContent();
     }
 
+    // Same selection and zone rules as the organization analytics. Owner/Admin: any (former) member; Member: themself.
     [HttpGet("{organizationId:guid}/analytics/members/{memberId:guid}")]
     [ProducesResponseType(typeof(MemberAnalyticsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetMemberAnalytics(
-    [FromRoute] Guid organizationId,
-    [FromRoute] Guid memberId,
-    [FromQuery] DateTime startDate,
-    [FromQuery] DateTime endDate)
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid memberId,
+        [FromQuery] string? view, [FromQuery] int? year, [FromQuery] int? from, [FromQuery] int? to)
     {
-        if (startDate >= endDate)
-        {
-            throw new BadRequestException("The start date must be before the end date.");
-        }
-
-        var query = new GetMemberAnalyticsQuery(organizationId, memberId, startDate, endDate);
-        var result = await _mediator.Send(query);
+        var result = await _mediator.Send(new GetMemberAnalyticsQuery(organizationId, memberId, view, year, from, to));
         return Ok(result);
     }
 

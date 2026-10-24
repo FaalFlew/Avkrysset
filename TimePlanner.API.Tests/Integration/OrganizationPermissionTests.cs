@@ -19,6 +19,7 @@ public sealed class OrganizationPermissionTests
     private static readonly Guid TaskId = Guid.NewGuid();
     private const string Start = "2026-10-20T08:00:00.000Z";
     private const string Range = "startDate=2026-10-19T00:00:00.000Z&endDate=2026-10-26T00:00:00.000Z";
+    private const string Selection = "view=weekly&year=2026&from=43&to=43";
 
     private static readonly Dictionary<string, Endpoint> Endpoints = new()
     {
@@ -50,10 +51,10 @@ public sealed class OrganizationPermissionTests
             (o, _) => new { organizationId = o.OrgId, userId = o.Admin.Id, newRole = "Member" }),
         ["update organization"] = new(Level.AdminOrOwner, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}",
             (o, _) => new { organizationId = o.OrgId, name = o.OrgName }),
-        ["org analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics?{Range}", (_, _) => null),
+        ["org analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics?{Selection}", (_, _) => null),
         ["join codes"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/join-codes", (_, _) => null),
         ["selectable members"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/members/selectable", (_, _) => null),
-        ["another member's analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics/members/{o.Owner.Id}?{Range}", (_, _) => null),
+        ["another member's analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics/members/{o.Owner.Id}?{Selection}", (_, _) => null),
 
         // Owner only
         ["delete organization"] = new(Level.Owner, HttpMethod.Delete, (o, _) => $"/api/organizations/{o.OrgId}", (_, _) => null),
@@ -72,7 +73,8 @@ public sealed class OrganizationPermissionTests
         ["org tasks"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/tasks?{Range}", (_, _) => null),
         ["org task"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/tasks/{TaskId}", (_, _) => null),
         ["activity"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/activity", (_, _) => null),
-        ["own member analytics"] = new(Level.Member, HttpMethod.Get, (o, u) => $"/api/organizations/{o.OrgId}/analytics/members/{u.Id}?{Range}", (_, _) => null),
+        ["own member analytics"] = new(Level.Member, HttpMethod.Get, (o, u) => $"/api/organizations/{o.OrgId}/analytics/members/{u.Id}?{Selection}", (_, _) => null),
+        ["analytics years"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics/years", (_, _) => null),
         ["my settings"] = new(Level.Member, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}/members/me/settings",
             (o, _) => new { organizationId = o.OrgId, statusMessage = "Heads down" }),
         ["edit org task"] = new(Level.Member, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}/tasks/{TaskId}",
