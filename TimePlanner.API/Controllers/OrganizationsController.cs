@@ -573,13 +573,17 @@ public class OrganizationsController : ControllerBase
         return Ok(result);
     }
 
+    // Newest first. before: exclusive upper bound (an instant; default now) - pass the previous page's nextBefore.
+    // limit: 1-100 (400 otherwise).
     [HttpGet("{organizationId:guid}/activity")]
-    [ProducesResponseType(typeof(List<ActivityLogDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ActivityPageDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetOrganizationActivity(Guid organizationId, [FromQuery] int limit = 50)
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetOrganizationActivity(
+        Guid organizationId, [FromQuery] DateTime? before, [FromQuery] int limit = GetOrganizationActivityQuery.DefaultLimit)
     {
-        var query = new GetOrganizationActivityQuery(organizationId, limit);
+        var query = new GetOrganizationActivityQuery(organizationId, before, limit);
         var result = await _mediator.Send(query);
         return Ok(result);
     }

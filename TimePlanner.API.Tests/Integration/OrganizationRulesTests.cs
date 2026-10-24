@@ -286,7 +286,7 @@ public sealed class OrganizationRulesTests
         Assert.Contains(analytics.GetProperty("timePerMember").EnumerateArray(), m => m.GetProperty("displayName").GetString() == "Grace");
 
         var activity = await OrgTestKit.ReadJsonAsync(await org.Owner.Client.GetAsync($"/api/organizations/{org.OrgId}/activity"), HttpStatusCode.OK);
-        Assert.Contains(activity.EnumerateArray(), a => a.GetProperty("actorDisplayName").GetString() == "Grace");
+        Assert.Contains(activity.GetProperty("items").EnumerateArray(), a => a.GetProperty("actorDisplayName").GetString() == "Grace");
     }
 
     // --- Migration ---
