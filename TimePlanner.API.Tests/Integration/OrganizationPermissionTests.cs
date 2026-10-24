@@ -70,6 +70,7 @@ public sealed class OrganizationPermissionTests
         ["issue panels"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/issue-panels", (_, _) => null),
         ["panel issues"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/issue-panels/{PanelId}/issues", (_, _) => null),
         ["org tasks"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/tasks?{Range}", (_, _) => null),
+        ["org task"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/tasks/{TaskId}", (_, _) => null),
         ["activity"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/activity", (_, _) => null),
         ["own member analytics"] = new(Level.Member, HttpMethod.Get, (o, u) => $"/api/organizations/{o.OrgId}/analytics/members/{u.Id}?{Range}", (_, _) => null),
         ["my settings"] = new(Level.Member, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}/members/me/settings",
@@ -82,8 +83,12 @@ public sealed class OrganizationPermissionTests
     public static TheoryData<string> AllEndpoints => new(Endpoints.Keys);
     public static TheoryData<string> RoleRestricted => new(Endpoints.Where(e => e.Value.Level != Level.Member).Select(e => e.Key));
     public static TheoryData<string> OwnerOnly => new(Endpoints.Where(e => e.Value.Level == Level.Owner).Select(e => e.Key));
+    // GETs of one resource by a placeholder id are 404 for members too ("not found"), so they're not in this list.
+    private static readonly HashSet<string> NeedsAnExistingResource = new() { "org task" };
+
     public static TheoryData<string> MemberReadable =>
-        new(Endpoints.Where(e => e.Value.Level == Level.Member && e.Value.Method == HttpMethod.Get).Select(e => e.Key));
+        new(Endpoints.Where(e => e.Value.Level == Level.Member && e.Value.Method == HttpMethod.Get && !NeedsAnExistingResource.Contains(e.Key))
+            .Select(e => e.Key));
 
     private static readonly SemaphoreSlim SetupGate = new(1, 1);
     private static OrgSetup? _setup;

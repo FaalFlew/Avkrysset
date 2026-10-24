@@ -75,12 +75,13 @@ public class PromoteIssueToTaskCommandHandler : IRequestHandler<PromoteIssueToTa
             throw new ConflictException("This issue has already been converted to a task.");
         }
 
-        // 3. Validate that all assignees are active members of the organization.
+        // 3. Validate that all assignees are active members of the organization (a repeated id counts once).
+        var assigneeIds = request.AssigneeIds.Distinct().ToList();
         var members = await _context.OrganizationMemberships
-            .Where(m => m.OrganizationId == request.OrganizationId && request.AssigneeIds.Contains(m.UserId))
+            .Where(m => m.OrganizationId == request.OrganizationId && assigneeIds.Contains(m.UserId))
             .ToListAsync(cancellationToken);
 
-        if (members.Count != request.AssigneeIds.Count || members.Any(m => m.Status != MembershipStatus.Active))
+        if (members.Count != assigneeIds.Count || members.Any(m => m.Status != MembershipStatus.Active))
         {
             throw new ValidationException("One or more specified assignees are not active members of this organization.");
         }
@@ -110,7 +111,7 @@ public class PromoteIssueToTaskCommandHandler : IRequestHandler<PromoteIssueToTa
             await _context.SaveChangesAsync(cancellationToken);
 
             // 2. Create the assignments.
-            var assignments = request.AssigneeIds.Select(assigneeId => new TaskAssignment
+            var assignments = assigneeIds.Select(assigneeId => new TaskAssignment
             {
                 TaskItemId = task.Id,
                 AssigneeId = assigneeId

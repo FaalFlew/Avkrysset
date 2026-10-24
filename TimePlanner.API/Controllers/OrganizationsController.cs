@@ -142,12 +142,15 @@ public class OrganizationsController : ControllerBase
         return CreatedAtAction("GetOrganizationTaskById", new { organizationId = result.OrganizationId, taskId = result.Id }, result);
     }
 
-    // Add a stub for the CreatedAtAction
+    // One task with the caller's capabilities; members get 404 unless they are an assignee or the creator.
     [HttpGet("{organizationId:guid}/tasks/{taskId:guid}")]
-    public IActionResult GetOrganizationTaskById(Guid organizationId, Guid taskId)
+    [ProducesResponseType(typeof(TaskItemDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetOrganizationTaskById(Guid organizationId, Guid taskId)
     {
-        // We will implement this properly in a future step.
-        return Ok(new { Message = $"Endpoint for task {taskId} in organization {organizationId} not implemented yet." });
+        var result = await _mediator.Send(new GetOrganizationTaskQuery(organizationId, taskId));
+        return Ok(result);
     }
 
     [HttpPost("{organizationId:guid}/issue-panels")]

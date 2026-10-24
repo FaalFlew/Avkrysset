@@ -70,12 +70,13 @@ public class CreateOrganizationTaskCommandHandler : IRequestHandler<CreateOrgani
             throw new ValidationException($"Category with ID {request.CategoryId} not found for your user.");
         }
 
-        // 2. Check if all assignees are valid, active members of the organization.
+        // 2. Check if all assignees are valid, active members of the organization (a repeated id counts once).
+        var assigneeIds = request.AssigneeIds.Distinct().ToList();
         var members = await _context.OrganizationMemberships
-            .Where(m => m.OrganizationId == request.OrganizationId && request.AssigneeIds.Contains(m.UserId))
+            .Where(m => m.OrganizationId == request.OrganizationId && assigneeIds.Contains(m.UserId))
             .ToListAsync(cancellationToken);
 
-        if (members.Count != request.AssigneeIds.Count)
+        if (members.Count != assigneeIds.Count)
         {
             throw new ValidationException("One or more specified assignees are not members of this organization.");
         }
@@ -111,7 +112,7 @@ public class CreateOrganizationTaskCommandHandler : IRequestHandler<CreateOrgani
             await _context.SaveChangesAsync(cancellationToken); // Save to get the task.Id
 
             // 2. Create the assignments
-            var assignments = request.AssigneeIds.Select(assigneeId => new TaskAssignment
+            var assignments = assigneeIds.Select(assigneeId => new TaskAssignment
             {
                 TaskItemId = task.Id,
                 AssigneeId = assigneeId
