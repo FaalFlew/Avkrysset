@@ -12,6 +12,7 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import router from "./router";
 import { setupTaskStoreSubscribers } from "./stores/taskStore";
+import { syncSessionAcrossTabs } from "./stores/authStore";
 import { initTheme } from "./composables/useTheme";
 
 // Sync the theme singleton with what the pre-paint script in index.html already applied.
@@ -24,5 +25,8 @@ app.use(router);
 
 // Persist guest data to localStorage.
 setupTaskStoreSubscribers();
+
+// Follow logouts / token refreshes of other tabs (they share the tokens in localStorage).
+syncSessionAcrossTabs();
 
 app.mount("#app");

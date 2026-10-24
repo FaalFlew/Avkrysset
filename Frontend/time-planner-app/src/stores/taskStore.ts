@@ -8,7 +8,7 @@ import { useUIStore } from "./uiStore";
 import type { Task, TaskTemplate, Category, MigrationData } from "@/types";
 import type { ToastAction } from "@/components/ui/types";
 import { apiDataService } from "@/services/apiDataService";
-import { useAuthStore } from "./authStore";
+import { sessionBound, useAuthStore } from "./authStore";
 import {
   localTaskService,
   localTemplateService,
@@ -28,7 +28,14 @@ import {
   type InstantRange,
 } from "@/lib/datetime";
 import { OTHER_COLOR } from "@/lib/categoryPalette";
-import { apiErrorMessage, isBadRequest, isConflict, isForbidden, NETWORK_ERROR_MESSAGE } from "@/lib/apiErrors";
+import {
+  apiErrorMessage,
+  isBadRequest,
+  isConflict,
+  isForbidden,
+  isSessionChangedError,
+  NETWORK_ERROR_MESSAGE,
+} from "@/lib/apiErrors";
 import {
   canDeleteTask,
   canEditTask,
@@ -80,8 +87,19 @@ export interface AddTaskOptions {
 
 export type NewTaskData = Omit<Task, "id" | "categoryName" | "categoryColor">;
 
+/**
+ * Keys of the error toasts of task actions (uiStore ToastOptions.key): when a retry of the same
+ * action succeeds, its stale error toast is dismissed — and only that one.
+ */
+export const TOAST_KEYS = {
+  addTask: "task:add",
+  updateTask: (id: string) => `task:update:${id}`,
+  deleteTask: (id: string) => `task:delete:${id}`,
+} as const;
+
 // Request bookkeeping (not reactive state).
-let initPromise: Promise<void> | null = null;
+/** The signed-in initialization in flight, per session (a new login never joins an old one). */
+let initRequest: { epoch: number; promise: Promise<void> } | null = null;
 let weekRequestSeq = 0;
 let todayRequestSeq = 0;
 let lastWeekRange: InstantRange | null = null;
@@ -108,6 +126,12 @@ export const useTaskStore = defineStore("tasks", {
 
     /** Whether guest data has been read from localStorage into the state. */
     guestDataLoaded: false,
+    /**
+     * Session epoch (authStore.sessionEpoch) in which guest data was loaded. Guest data is only
+     * saved while it matches: right after a logout the state still holds account data until
+     * loadGuestData() runs, and that must never reach guest storage.
+     */
+    guestSessionEpoch: null as number | null,
   }),
 
   getters: {
@@ -132,16 +156,17 @@ export const useTaskStore = defineStore("tasks", {
         this.initError = null;
         return;
       }
-      if (initPromise) return initPromise;
+      if (initRequest && initRequest.epoch === authStore.sessionEpoch) return initRequest.promise;
 
-      initPromise = (async () => {
+      const request = { epoch: authStore.sessionEpoch, promise: Promise.resolve() };
+      initRequest = request;
+      request.promise = (async () => {
         this.isInitializing = true;
         this.initError = null;
         try {
-          const [categories, templates] = await Promise.all([
-            apiDataService.getCategories(),
-            apiDataService.getTaskTemplates(),
-          ]);
+          const [categories, templates] = await sessionBound(() =>
+            Promise.all([apiDataService.getCategories(), apiDataService.getTaskTemplates()])
+          );
           this.categories = categories;
           this.templates = templates;
           // Coming from guest mode: drop the guest tasks; the week is fetched by date range.
@@ -152,14 +177,17 @@ export const useTaskStore = defineStore("tasks", {
           }
           this.guestDataLoaded = false;
         } catch (error) {
+          if (isSessionChangedError(error)) return; // logged out meanwhile: nothing to show
           console.error("Failed to initialize data:", error);
           this.initError = INIT_ERROR_MESSAGE;
         } finally {
-          this.isInitializing = false;
-          initPromise = null;
+          if (initRequest === request) {
+            this.isInitializing = false;
+            initRequest = null;
+          }
         }
       })();
-      return initPromise;
+      return request.promise;
     },
 
     /** Guest mode: read categories, templates and tasks from localStorage (synchronous). */
@@ -177,6 +205,7 @@ export const useTaskStore = defineStore("tasks", {
         this.categories.unshift({ id: uuidv4(), name: "Other", color: OTHER_COLOR });
       }
       this.guestDataLoaded = true;
+      this.guestSessionEpoch = useAuthStore().sessionEpoch;
     },
 
     /** Authenticated mode: load the tasks starting in `[range.start, range.end)`. */
@@ -190,7 +219,7 @@ export const useTaskStore = defineStore("tasks", {
       this.isLoadingWeek = true;
       this.weekError = null;
       try {
-        const tasks = await apiDataService.getTasks(range);
+        const tasks = await sessionBound(() => apiDataService.getTasks(range));
         if (seq !== weekRequestSeq) return; // a newer week was requested meanwhile
         if (taskMutations !== mutationsAtStart) {
           // A task was added/moved/deleted while this request was in flight (e.g. dropped into
@@ -201,7 +230,7 @@ export const useTaskStore = defineStore("tasks", {
         }
         this.tasks = tasks;
       } catch (error) {
-        if (seq !== weekRequestSeq) return;
+        if (seq !== weekRequestSeq || isSessionChangedError(error)) return;
         console.error("Failed to fetch tasks:", error);
         this.weekError = WEEK_ERROR_MESSAGE;
       } finally {
@@ -289,12 +318,13 @@ export const useTaskStore = defineStore("tasks", {
       const uiStore = useUIStore();
       try {
         const newCategory: Category = authStore.isAuthenticated
-          ? await apiDataService.createCategory(categoryData)
+          ? await sessionBound(() => apiDataService.createCategory(categoryData))
           : { ...categoryData, id: uuidv4() };
         this.categories.push(newCategory);
         uiStore.showToast("Category added", "success", 2500);
         return newCategory;
       } catch (error) {
+        if (isSessionChangedError(error)) return null;
         uiStore.showToast(apiErrorMessage(error, "Couldn't add the category."), "error");
         console.error(error);
         return null;
@@ -309,16 +339,19 @@ export const useTaskStore = defineStore("tasks", {
 
       try {
         if (authStore.isAuthenticated) {
-          await apiDataService.updateCategory(updatedCategory.id, {
-            name: updatedCategory.name,
-            color: updatedCategory.color,
-          });
+          await sessionBound(() =>
+            apiDataService.updateCategory(updatedCategory.id, {
+              name: updatedCategory.name,
+              color: updatedCategory.color,
+            })
+          );
         }
         this.categories[index] = updatedCategory;
         this.syncCategoryFields(updatedCategory.id, updatedCategory);
         uiStore.showToast("Category saved", "success", 2500);
         return true;
       } catch (error) {
+        if (isSessionChangedError(error)) return false;
         uiStore.showToast(apiErrorMessage(error, "Couldn't save the category."), "error");
         console.error(error);
         return false;
@@ -338,8 +371,10 @@ export const useTaskStore = defineStore("tasks", {
       try {
         if (authStore.isAuthenticated) {
           // The backend re-assigns tasks and templates; refresh templates from the server.
-          await apiDataService.deleteCategory(categoryId);
-          this.templates = await apiDataService.getTaskTemplates();
+          this.templates = await sessionBound(async () => {
+            await apiDataService.deleteCategory(categoryId);
+            return apiDataService.getTaskTemplates();
+          });
         }
         // Re-assign locally (guest: the source of truth; signed in: mirrors the server).
         this.syncCategoryFields(categoryId, otherCat);
@@ -347,6 +382,7 @@ export const useTaskStore = defineStore("tasks", {
         uiStore.showToast("Category deleted. Its items moved to “Other”.", "info");
         return true;
       } catch (error) {
+        if (isSessionChangedError(error)) return false;
         uiStore.showToast(apiErrorMessage(error, "Couldn't delete the category."), "error");
         console.error(error);
         return false;
@@ -375,7 +411,7 @@ export const useTaskStore = defineStore("tasks", {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       const fail = (message: string): null => {
-        if (!options.silent) uiStore.showToast(message, "error");
+        if (!options.silent) uiStore.showToast(message, "error", 4000, { key: TOAST_KEYS.addTask });
         return null;
       };
 
@@ -388,8 +424,11 @@ export const useTaskStore = defineStore("tasks", {
       let newTask: Task;
       if (authStore.isAuthenticated) {
         try {
-          newTask = await apiDataService.createTask(taskData);
+          const body = taskData;
+          newTask = await sessionBound(() => apiDataService.createTask(body));
         } catch (error) {
+          // Logged out while the server was answering: the task belongs to the old session.
+          if (isSessionChangedError(error)) return null;
           this.refreshAfterRejection(error);
           return fail(apiErrorMessage(error, "Couldn't add the task."));
         }
@@ -407,6 +446,7 @@ export const useTaskStore = defineStore("tasks", {
       taskMutations += 1;
       this.tasks.push(newTask);
       if (this.isInTodayList(newTask)) this.todayTasks.push(newTask);
+      uiStore.dismissToast(TOAST_KEYS.addTask); // a retry worked: its earlier error is stale
       return newTask;
     },
 
@@ -421,8 +461,11 @@ export const useTaskStore = defineStore("tasks", {
       const opts: UpdateTaskOptions = typeof options === "boolean" ? { silent: options } : options;
       const authStore = useAuthStore();
       const uiStore = useUIStore();
+      const toastKey = TOAST_KEYS.updateTask(updatedTask.id);
       const fail = (message: string, action?: ToastAction): false => {
-        if (!opts.silent) uiStore.showToast(message, "error", action ? 8000 : 4000, action ? { action } : {});
+        if (!opts.silent) {
+          uiStore.showToast(message, "error", action ? 8000 : 4000, action ? { action, key: toastKey } : { key: toastKey });
+        }
         return false;
       };
 
@@ -459,12 +502,14 @@ export const useTaskStore = defineStore("tasks", {
       if (authStore.isAuthenticated) {
         try {
           // Org tasks are saved through the organization (personal endpoints refuse them).
-          if (isOrgTask(updatedTask)) {
-            await apiDataService.updateOrganizationTask(updatedTask.organizationId!, updatedTask.id, taskDataForApi);
-          } else {
-            await apiDataService.updateTask(updatedTask.id, taskDataForApi);
-          }
+          const task = updatedTask;
+          await sessionBound(() =>
+            isOrgTask(task)
+              ? apiDataService.updateOrganizationTask(task.organizationId!, task.id, taskDataForApi)
+              : apiDataService.updateTask(task.id, taskDataForApi)
+          );
         } catch (error) {
+          if (isSessionChangedError(error)) return false;
           this.refreshAfterRejection(error);
           return fail(apiErrorMessage(error, "Couldn't save the task."), isBadRequest(error) ? opts.errorAction : undefined);
         }
@@ -475,6 +520,7 @@ export const useTaskStore = defineStore("tasks", {
 
       this.replaceTaskLocally(updatedTask);
       taskMutations += 1;
+      uiStore.dismissToast(toastKey); // a retry worked: its earlier error is stale
       return true;
     },
 
@@ -492,12 +538,15 @@ export const useTaskStore = defineStore("tasks", {
       const ok = await this.updateTask(updated, { silentSuccess: true, errorAction: options.errorAction });
       if (!ok || !options.announceDestination) return ok;
 
+      const epoch = useAuthStore().sessionEpoch;
       const day = toDateKey(updated.start);
       uiStore.showToast(`Moved to ${formatDate(day, "weekday")}`, "success", 6000, {
         undo: true,
         action: {
           label: "Undo",
           onClick: () => {
+            // The move belongs to the session it was made in (never undo it into another one).
+            if (useAuthStore().sessionEpoch !== epoch) return;
             const back: Task = { ...updated, start: original.start, duration: original.duration };
             void this.updateTask(back, { silentSuccess: true }).then((restored) => {
               if (!restored) return;
@@ -565,21 +614,28 @@ export const useTaskStore = defineStore("tasks", {
       };
 
       // Signed in: the server request. Resolves true when the task is gone for good.
+      const epoch = authStore.sessionEpoch;
       const request = () =>
-        isOrgTask(original)
-          ? apiDataService.deleteOrganizationTask(original.organizationId!, taskId)
-          : apiDataService.deleteTask(taskId);
+        sessionBound(() =>
+          isOrgTask(original)
+            ? apiDataService.deleteOrganizationTask(original.organizationId!, taskId)
+            : apiDataService.deleteTask(taskId)
+        );
+      const toastKey = TOAST_KEYS.deleteTask(taskId);
       const deleted: Promise<boolean> = authStore.isAuthenticated
         ? request().then(
             () => {
               taskMutations += 1;
+              uiStore.dismissToast(toastKey); // a retry worked: its earlier error is stale
               return true;
             },
             (error: unknown) => {
+              // Logged out meanwhile: the state now belongs to another session; restore nothing.
+              if (isSessionChangedError(error)) return false;
               console.error(error);
               restore();
               this.refreshAfterRejection(error);
-              uiStore.showToast(apiErrorMessage(error, "Couldn't delete the task."), "error");
+              uiStore.showToast(apiErrorMessage(error, "Couldn't delete the task."), "error", 4000, { key: toastKey });
               return false;
             }
           )
@@ -595,7 +651,8 @@ export const useTaskStore = defineStore("tasks", {
             // the task for good. If the DELETE failed, the task was already restored.
             onClick: () => {
               void deleted.then((ok) => {
-                if (!ok) return;
+                // Never re-create one session's task in another (e.g. Undo right after logout).
+                if (!ok || useAuthStore().sessionEpoch !== epoch) return;
                 if (isOrgTask(original)) {
                   void this.restoreOrganizationTask(original);
                   return;
@@ -626,16 +683,19 @@ export const useTaskStore = defineStore("tasks", {
         ? (original.assignees ?? []).map((a) => a.userId).filter(Boolean)
         : null;
       try {
-        const created = await apiDataService.createOrganizationTask(
-          original.organizationId!,
-          { title: original.title, start: original.start, duration: original.duration, categoryId: original.categoryId },
-          assigneeIds
+        const created = await sessionBound(() =>
+          apiDataService.createOrganizationTask(
+            original.organizationId!,
+            { title: original.title, start: original.start, duration: original.duration, categoryId: original.categoryId },
+            assigneeIds
+          )
         );
         taskMutations += 1;
         this.tasks.push(created);
         if (this.isInTodayList(created)) this.todayTasks.push(created);
         return created;
       } catch (error) {
+        if (isSessionChangedError(error)) return null;
         this.refreshAfterRejection(error);
         uiStore.showToast(apiErrorMessage(error, "Couldn't restore the task."), "error");
         return null;
@@ -657,7 +717,7 @@ export const useTaskStore = defineStore("tasks", {
 
       try {
         const newTemplate: TaskTemplate = authStore.isAuthenticated
-          ? await apiDataService.createTaskTemplate(templateData)
+          ? await sessionBound(() => apiDataService.createTaskTemplate(templateData))
           : {
               ...templateData,
               id: uuidv4(),
@@ -668,6 +728,7 @@ export const useTaskStore = defineStore("tasks", {
         uiStore.showToast("Template added", "success", 2500);
         return newTemplate;
       } catch (error) {
+        if (isSessionChangedError(error)) return null;
         console.error("Failed to create template:", error);
         uiStore.showToast(apiErrorMessage(error, "Couldn't add the template."), "error");
         return null;
@@ -678,11 +739,12 @@ export const useTaskStore = defineStore("tasks", {
       const authStore = useAuthStore();
       const uiStore = useUIStore();
       try {
-        if (authStore.isAuthenticated) await apiDataService.deleteTaskTemplate(templateId);
+        if (authStore.isAuthenticated) await sessionBound(() => apiDataService.deleteTaskTemplate(templateId));
         this.templates = this.templates.filter((t) => t.id !== templateId);
         uiStore.showToast("Template deleted", "info", 2500);
         return true;
       } catch (error) {
+        if (isSessionChangedError(error)) return false;
         console.error("Failed to delete template:", error);
         uiStore.showToast(apiErrorMessage(error, "Couldn't delete the template."), "error");
         return false;
@@ -704,16 +766,20 @@ export const useTaskStore = defineStore("tasks", {
 
       try {
         if (authStore.isAuthenticated) {
-          await apiDataService.updateTaskTemplate(updatedTemplate.id, {
-            title: updatedTemplate.title,
-            duration: updatedTemplate.duration,
-            categoryId: updatedTemplate.categoryId,
-          });
+          const template = updatedTemplate;
+          await sessionBound(() =>
+            apiDataService.updateTaskTemplate(template.id, {
+              title: template.title,
+              duration: template.duration,
+              categoryId: template.categoryId,
+            })
+          );
         }
         this.templates[index] = updatedTemplate;
         uiStore.showToast("Template saved", "success", 2500);
         return true;
       } catch (error) {
+        if (isSessionChangedError(error)) return false;
         console.error("Failed to update template:", error);
         uiStore.showToast(apiErrorMessage(error, "Couldn't save the template."), "error");
         return false;
@@ -743,12 +809,12 @@ export const useTaskStore = defineStore("tasks", {
       this.todayError = null;
       try {
         // Filtered again in case an older backend returns a wider range.
-        const tasks = await apiDataService.getTasksForDay(day);
+        const tasks = await sessionBound(() => apiDataService.getTasksForDay(day));
         if (seq !== todayRequestSeq) return;
         this.todayTasks = tasks.filter((task) => isInRange(task.start, range));
         this.todayTasksDay = day;
       } catch (error) {
-        if (seq !== todayRequestSeq) return;
+        if (seq !== todayRequestSeq || isSessionChangedError(error)) return;
         console.error("Failed to fetch today's tasks:", error);
         this.todayError = TODAY_ERROR_MESSAGE;
       } finally {
@@ -768,18 +834,28 @@ export const useTaskStore = defineStore("tasks", {
   },
 });
 
+/**
+ * Whether the task store's state may be written to guest storage: signed out, guest data loaded
+ * (never write an empty pre-load state over the stored data), and loaded in the CURRENT session
+ * epoch — right after a logout the state still holds account data until loadGuestData() runs,
+ * and a late answer for the old session must never be persisted as guest data either.
+ */
+export function canPersistGuestData(
+  state: { guestDataLoaded: boolean; guestSessionEpoch: number | null },
+  auth: { isAuthenticated: boolean; sessionEpoch: number }
+): boolean {
+  return !auth.isAuthenticated && state.guestDataLoaded && state.guestSessionEpoch === auth.sessionEpoch;
+}
+
 /** Persist guest-mode changes to localStorage. */
 export function setupTaskStoreSubscribers() {
   const taskStore = useTaskStore();
   const authStore = useAuthStore();
 
   taskStore.$subscribe((_mutation, state) => {
-    // Only save to localStorage if the user is a guest whose data has been loaded (never write
-    // an empty pre-load state over the stored data).
-    if (!authStore.isAuthenticated && state.guestDataLoaded) {
-      localTaskService.saveTasks(state.tasks);
-      localTemplateService.saveTemplates(state.templates);
-      localCategoryService.saveCategories(state.categories);
-    }
+    if (!canPersistGuestData(state, authStore)) return;
+    localTaskService.saveTasks(state.tasks);
+    localTemplateService.saveTemplates(state.templates);
+    localCategoryService.saveCategories(state.categories);
   });
 }

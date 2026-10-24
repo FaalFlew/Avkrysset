@@ -12,6 +12,11 @@ export interface ToastOptions {
   action?: ToastAction;
   /** Marks the action as an undo: Ctrl/⌘+Z runs it while the toast is visible. */
   undo?: boolean;
+  /**
+   * The action the toast is about (e.g. "task:add", "task:update:<id>"), so a later success of
+   * that same action can dismiss its stale error toast (dismissToast). Other toasts stay.
+   */
+  key?: string;
 }
 
 export interface ConfirmOptions {
@@ -28,6 +33,8 @@ export interface ToastState {
   action: ToastAction | null;
   /** True when `action` is an undo (Ctrl/⌘+Z triggers it). */
   undo: boolean;
+  /** ToastOptions.key of the visible toast, or null. */
+  key: string | null;
 }
 
 export interface ConfirmationDialogState {
@@ -51,8 +58,11 @@ export const useUIStore = defineStore("ui", {
       isVisible: false,
       action: null,
       undo: false,
+      key: null,
     } as ToastState,
     _timeoutId: null as number | null,
+    /** Rendered height of the visible toast in px (measured by ToastNotification; 0 = unknown). */
+    toastHeight: 0,
     /** When the current toast hides (performance.now() ms), and the time left while paused. */
     _toastDeadline: 0,
     _toastRemaining: null as number | null,
@@ -125,6 +135,7 @@ export const useUIStore = defineStore("ui", {
       this.toast.type = type;
       this.toast.action = options.action ?? null;
       this.toast.undo = !!options.action && !!options.undo;
+      this.toast.key = options.key ?? null;
       this.toast.isVisible = true;
       this._toastRemaining = null;
       this._startToastTimer(duration);
@@ -154,11 +165,25 @@ export const useUIStore = defineStore("ui", {
       this._startToastTimer(remaining);
     },
 
+    /** ToastNotification reports the toast's rendered height (what stacks above it moves up). */
+    setToastHeight(px: number) {
+      this.toastHeight = Number.isFinite(px) && px > 0 ? Math.round(px) : 0;
+    },
+
+    /**
+     * A retry of an action succeeded: hide the toast if it is about that same action (its stale
+     * error). Any other toast stays.
+     */
+    dismissToast(key: string) {
+      if (this.toast.isVisible && this.toast.key === key) this.hideToast();
+    },
+
     hideToast() {
       this.toast.isVisible = false;
       this.toast.message = "";
       this.toast.action = null;
       this.toast.undo = false;
+      this.toast.key = null;
       this._toastRemaining = null;
       if (this._timeoutId) {
         clearTimeout(this._timeoutId);

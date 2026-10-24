@@ -13,6 +13,7 @@ import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/authStore";
 import type { Task, TaskAnalyticsResponse } from "@/types";
 import { apiDataService } from "@/services/apiDataService";
+import { isSessionChangedError } from "@/lib/apiErrors";
 import { dateKeyParts, isInRange, isoWeekOf, toDateKey, todayKey } from "@/lib/datetime";
 import { useTimeZone } from "@/composables/useClock";
 import {
@@ -167,6 +168,7 @@ export function useStats() {
       const years = await apiDataService.getTaskYears();
       availableYears.value = years.length > 0 ? years : [currentYear()];
     } catch (error) {
+      if (isSessionChangedError(error)) return; // logged out meanwhile
       console.error("Failed to fetch available years:", error);
       availableYears.value = [currentYear()];
     }
@@ -404,7 +406,7 @@ export function useStats() {
         loadedSelection.value = sel;
         error.value = null;
       } catch (e) {
-        if (requestId !== latestRequest) return;
+        if (requestId !== latestRequest || isSessionChangedError(e)) return; // superseded / logged out
         console.error("Failed to fetch analytics", e);
         error.value = errorMessage(e);
       } finally {

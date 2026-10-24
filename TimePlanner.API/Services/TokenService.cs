@@ -35,7 +35,7 @@ public class TokenService : ITokenService
     /// <summary>
     /// Generates the short-lived JWT used to access protected API endpoints.
     /// </summary>
-    private async Task<string> GenerateAccessTokenAsync(User user) // Make async
+    public async Task<string> GenerateAccessTokenAsync(User user)
     {
         var jwtSettings = _configuration.GetSection("JwtSettings");
         var secretKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Secret"]!));
@@ -80,7 +80,7 @@ public class TokenService : ITokenService
     /// <summary>
     /// Generates a cryptographically secure, random string to be used as a refresh token.
     /// </summary>
-    private string GenerateRefreshToken()
+    public string GenerateRefreshToken()
     {
         var randomNumber = new byte[64];
         using var rng = RandomNumberGenerator.Create();

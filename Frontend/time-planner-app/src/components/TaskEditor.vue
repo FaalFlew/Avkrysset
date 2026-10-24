@@ -51,6 +51,7 @@ import { displayTitle, formatTaskTimeRange } from "@/lib/plannerFormat";
 import { canDeleteTask, editorModeFor, isOrgTask, orgAttribution, organizationLabel, orgMonogram } from "@/lib/taskAccess";
 import { useCurrentUserId } from "@/composables/useCurrentUser";
 import { OTHER_COLOR } from "@/lib/categoryPalette";
+import { isMutationSlow } from "@/services/slowRequests";
 
 const LAST_CATEGORY_KEY = "tp-last-category";
 const TEMPLATE_PREVIEW_COUNT = 6;
@@ -585,8 +586,10 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
           Delete
         </UiButton>
         <UiButton variant="ghost" @click="open = false">Cancel</UiButton>
+        <!-- While a modal is open the app-wide "Waking up the server…" pill stands down; the
+             button says it instead. -->
         <UiButton variant="primary" type="submit" form="task-editor-form" :loading="saving">
-          {{ isEditing ? "Save" : "Add task" }}
+          {{ saving && isMutationSlow ? "Waking up the server…" : isEditing ? "Save" : "Add task" }}
           <template v-if="!isCoarse" #trailing><UiKbd :keys="['Enter']" tone="onAccent" /></template>
         </UiButton>
       </template>

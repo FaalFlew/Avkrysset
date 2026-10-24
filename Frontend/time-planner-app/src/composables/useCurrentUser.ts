@@ -7,23 +7,16 @@
 import { computed, ref, type ComputedRef } from "vue";
 import { useAuthStore } from "@/stores/authStore";
 import { apiDataService } from "@/services/apiDataService";
+import { jwtClaims } from "@/lib/jwt";
 
 const NAME_IDENTIFIER = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier";
 
 /** The user id (`sub`) of a JWT access token, or null when it can't be read. */
 export function userIdFromToken(token: string | null | undefined): string | null {
-  if (!token) return null;
-  const payload = token.split(".")[1];
-  if (!payload) return null;
-  try {
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "=");
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    const claims = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
-    const id = claims.sub ?? claims[NAME_IDENTIFIER];
-    return typeof id === "string" && id.trim() ? id.trim() : null;
-  } catch {
-    return null;
-  }
+  const claims = jwtClaims(token);
+  if (!claims) return null;
+  const id = claims.sub ?? claims[NAME_IDENTIFIER];
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 /** Fallback cache: the profile id fetched for a session (refresh token). */

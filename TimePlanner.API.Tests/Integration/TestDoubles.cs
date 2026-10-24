@@ -190,3 +190,27 @@ public sealed class FaultInjectionInterceptor : SaveChangesInterceptor
         }
     }
 }
+
+/// <summary>
+/// The API's TimeProvider in the tests: the real clock plus an offset that a test can shift for a moment
+/// (e.g. "30 seconds later") and that is reset when the returned handle is disposed.
+/// </summary>
+public sealed class TestClock : TimeProvider
+{
+    private long _offsetTicks;
+
+    public TimeSpan Offset => TimeSpan.FromTicks(Interlocked.Read(ref _offsetTicks));
+
+    public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Offset;
+
+    public IDisposable Shift(TimeSpan offset)
+    {
+        Interlocked.Exchange(ref _offsetTicks, offset.Ticks);
+        return new Resetter(this);
+    }
+
+    private sealed class Resetter(TestClock owner) : IDisposable
+    {
+        public void Dispose() => Interlocked.Exchange(ref owner._offsetTicks, 0);
+    }
+}

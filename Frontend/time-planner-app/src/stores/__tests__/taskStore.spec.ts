@@ -236,3 +236,46 @@ describe("409 from the server (M6)", () => {
     ui.hideToast();
   });
 });
+
+describe("stale error toasts", () => {
+  const data = () => ({ title: "Plan", start: "2026-10-05T09:00:00.000Z", duration: 1, categoryId: CATEGORY.id });
+
+  it("a successful retry of the same action dismisses its error toast", async () => {
+    const { store, ui } = setup(true);
+    api.createTask.mockRejectedValueOnce({ response: { status: 503 } });
+    expect(await store.addTask(data())).toBeNull();
+    expect(ui.toast.isVisible).toBe(true);
+    expect(ui.toast.type).toBe("error");
+
+    expect(await store.addTask(data())).not.toBeNull(); // the retry works
+    expect(ui.toast.isVisible).toBe(false);
+  });
+
+  it("only that action's toast: another action's error stays until its own retry works", async () => {
+    const { store, ui } = setup(true);
+    api.updateTask.mockRejectedValueOnce({ response: { status: 500 } });
+    expect(await store.updateTask({ ...task(), title: "Renamed" })).toBe(false);
+    const message = ui.toast.message;
+
+    expect(await store.addTask(data())).not.toBeNull(); // a different action
+    expect(ui.toast.isVisible).toBe(true);
+    expect(ui.toast.message).toBe(message);
+
+    api.updateTask.mockResolvedValueOnce(undefined);
+    expect(await store.updateTask({ ...task("t2"), title: "Other task" })).toBe(true); // another task
+    expect(ui.toast.isVisible).toBe(true);
+
+    expect(await store.updateTask({ ...task(), title: "Renamed" })).toBe(true); // the same update
+    expect(ui.toast.isVisible).toBe(false);
+  });
+
+  it("uiStore.dismissToast only hides a toast with that key", () => {
+    const { ui } = setup(true);
+    ui.showToast("Category added", "success");
+    ui.dismissToast("task:add");
+    expect(ui.toast.isVisible).toBe(true);
+    ui.showToast("Couldn't add the task.", "error", 4000, { key: "task:add" });
+    ui.dismissToast("task:add");
+    expect(ui.toast.isVisible).toBe(false);
+  });
+});

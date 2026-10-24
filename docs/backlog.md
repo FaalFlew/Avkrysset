@@ -5,7 +5,7 @@ Roadmap phases: `docs/plans/pdf-export-and-organizations.md`.
 
 ## Next (before Phase 3)
 
-### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH
+### 1. Bug: logging out during a cold start logs you back in (and can mix account data into guest data) — HIGH — DONE (feature/auth-session-race, live-verified 2026-10-24)
 **Reported 2026-10-23.** Signed in but idle for hours (Azure has unloaded the API and the access token has expired). Creating a
 task hangs on the cold start; the user logs out, starts using the guest planner, and is suddenly switched back to the account.
 **Cause (confirmed in code):**
@@ -60,6 +60,17 @@ calendar filtered by project (one calendar catches double-bookings across projec
 - The CSV formula-injection guard doesn't treat a leading `\r` as dangerous (client and server).
 - Report CSVs requested without `locale` fall back to invariant labels ("2026 January – 2026 December"); the app always sends
   `locale`, so only direct API users see it.
+
+### 8. Auth hardening found while fixing item 1 — SMALL–MEDIUM
+- ~~Refresh exact token match, race-safe refresh save, previous-token grace period~~ — DONE in `feature/auth-session-race`
+  (2026-10-24; see `docs/plans/auth-session-race.md` "Refresh grace period").
+- Login ignores a failed `UserManager.UpdateAsync` result; login and refresh have no rate limiting.
+- Every token lookup scans `AspNetUsers` (`RefreshToken` is `nvarchar(max)`, unindexed) — store a hash in an indexed column.
+- One refresh token per user: signing in on a second device signs the first one out on its next refresh (design decision to
+  revisit if multi-device use matters).
+- Per-IP rate limits depend on the client IP reaching the app; on Azure configure forwarded headers so users don't share a bucket.
+- Access-token lifetime is hard-coded (15 min in `TokenService.cs`) and JWT `ClockSkew` is the 5-minute default, so expired tokens
+  are accepted for up to 5 extra minutes — make the lifetime configurable and use a small ClockSkew (e.g. 30 s).
 
 ## Housekeeping
 - Move secrets from the deployed `appsettings.Secrets.json` to Azure App Settings (long-term, cleaner).

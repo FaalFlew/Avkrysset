@@ -12,6 +12,11 @@ public class User : IdentityUser<Guid>
     public string? RefreshToken { get; set; }
     public DateTime RefreshTokenExpiryTime { get; set; }
 
+    // Grace period after a rotation: the refresh token that was just replaced still gets the CURRENT pair until
+    // PreviousRefreshTokenValidUntilUtc, so a refresh response the client never received doesn't end the session.
+    public string? PreviousRefreshToken { get; set; }
+    public DateTime? PreviousRefreshTokenValidUntilUtc { get; set; }
+
     // Optional name shown to other organization members; the email is shown when it's not set.
     public string? DisplayName { get; set; }
 

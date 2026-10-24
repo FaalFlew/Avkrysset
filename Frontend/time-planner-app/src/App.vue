@@ -9,6 +9,7 @@ import { RouterView, useRoute, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { Plus } from "lucide-vue-next";
 import ToastNotification from "./components/ToastNotification.vue";
+import ServerWakeIndicator from "./components/ServerWakeIndicator.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import TaskEditor from "./components/TaskEditor.vue";
 import ShortcutsDialog from "./components/ShortcutsDialog.vue";
@@ -24,6 +25,8 @@ import { useBreakpoint } from "./composables/useMediaQuery";
 import { useTaskEditor } from "./composables/useTaskEditor";
 import { installHotkeys, type HotkeyMap } from "./composables/useHotkeys";
 import { useTimeZone } from "./composables/useClock";
+import { installSessionWarmup } from "./composables/useSessionWarmup";
+import { closeSessionBoundUi, onSessionChange } from "./composables/useSessionBound";
 import { weekDaysOf, weekRange } from "@/lib/datetime";
 
 const uiStore = useUIStore();
@@ -72,6 +75,17 @@ watch(
   },
   { immediate: true }
 );
+
+// Signed in: wake a cold server and refresh an expired token on load and when the tab comes back
+// after a long time away, before the user acts (composables/useSessionWarmup.ts).
+let uninstallWarmup: (() => void) | null = null;
+onMounted(() => {
+  uninstallWarmup = installSessionWarmup();
+});
+onBeforeUnmount(() => uninstallWarmup?.());
+
+// A session that ends (or starts) closes the editor, confirm dialogs and Undo toasts of the old one.
+onSessionChange(closeSessionBoundUi);
 
 // ---------------------------------------------------------------- hotkeys
 function guard(fn: () => unknown): () => boolean | void {
@@ -125,8 +139,10 @@ function skipToContent(): void {
 
       <main id="main" class="app-shell__main" :class="{ 'is-planner': isPlanner }" tabindex="-1">
         <!-- Keyed on the time zone: if the device zone changes (travel), the page remounts so every
-             position/label is recomputed and Today/Analytics refetch on mount. -->
-        <RouterView :key="timeZone" />
+             position/label is recomputed and Today/Analytics refetch on mount. Keyed on the auth
+             state too: pages pick guest or account data at setup, so a session that ends or starts
+             underneath them (e.g. a logout in another tab) remounts them in the right mode. -->
+        <RouterView :key="`${timeZone}|${isAuthenticated}`" />
       </main>
 
       <AppTabBar v-if="isMobile" />
@@ -146,6 +162,8 @@ function skipToContent(): void {
     </div>
 
     <SidebarDrawer v-if="isTablet && !isAuthLayout" />
+    <!-- "Waking up the server…" while a change waits for a cold API (sign-in pages have their own). -->
+    <ServerWakeIndicator v-if="!isAuthLayout" />
   </template>
 
   <!-- Global overlays (teleported to <body>) -->

@@ -76,6 +76,8 @@ public class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand>
         // ensures that any compromised devices/sessions are logged out.
         user.RefreshToken = null;
         user.RefreshTokenExpiryTime = DateTime.UtcNow; // Expire the time as well for good measure.
+        user.PreviousRefreshToken = null; // the refresh grace-period token too
+        user.PreviousRefreshTokenValidUntilUtc = null;
 
         var updateResult = await _userManager.UpdateAsync(user);
 

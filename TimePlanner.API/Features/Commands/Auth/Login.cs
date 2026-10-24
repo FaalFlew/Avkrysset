@@ -78,6 +78,9 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, AuthResponse>
         // --- 4. Update the user's refresh token ---
         user.RefreshToken = refreshToken;
         user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+        // A sign-in starts a new session: an older rotation's grace-period token must not pick up this one.
+        user.PreviousRefreshToken = null;
+        user.PreviousRefreshTokenValidUntilUtc = null;
         await _userManager.UpdateAsync(user);
         _logger.LogInformation("User with email {Email} logged in successfully.", request.Email);
 

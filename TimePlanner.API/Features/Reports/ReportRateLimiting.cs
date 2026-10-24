@@ -1,11 +1,10 @@
-using System.Globalization;
 using System.Security.Claims;
-using System.Text.Json;
 using System.Threading.RateLimiting;
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Reports;
 
-/// <summary>Marks endpoints that render reports; only they are rate limited.</summary>
+/// <summary>Marks endpoints that render reports; the report limiter applies only to them.</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public sealed class ReportRenderingAttribute : Attribute
 {
@@ -43,24 +42,14 @@ public static class ReportRateLimiting
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             limiter.GlobalLimiter = CreateGlobalLimiter(options);
 
-            limiter.OnRejected = async (context, cancellationToken) =>
+            // Rejections by the global limiter (reports). Endpoint policies such as the sign-out limit bring their own.
+            limiter.OnRejected = (context, cancellationToken) =>
             {
                 // Only the per-user bucket reports when a token comes back; a rejection without it means "busy".
                 var tooMany = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter);
-                var seconds = Math.Max(1, tooMany ? (int)Math.Ceiling(retryAfter.TotalSeconds) : options.BusyRetryAfterSeconds);
-                var wait = $"{seconds} second{(seconds == 1 ? "" : "s")}";
-
-                var response = context.HttpContext.Response;
-                response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
-                response.Headers.CacheControl = "no-store";
-                response.ContentType = "application/json";
-                await response.WriteAsync(JsonSerializer.Serialize(new
-                {
-                    message = tooMany
-                        ? $"Too many report requests. Please try again in {wait}."
-                        : $"Reports are busy right now. Please try again in {wait}.",
-                    errors = Array.Empty<string>()
-                }), cancellationToken);
+                var seconds = tooMany ? (int)Math.Ceiling(retryAfter.TotalSeconds) : options.BusyRetryAfterSeconds;
+                return RateLimitRejection.WriteAsync(context.HttpContext.Response, seconds,
+                    tooMany ? "Too many report requests." : "Reports are busy right now.", cancellationToken);
             };
         });
 

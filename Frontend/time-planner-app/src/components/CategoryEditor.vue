@@ -16,6 +16,8 @@ import UiButton from "@/components/ui/UiButton.vue";
 import UiInput from "@/components/ui/UiInput.vue";
 import { useTasks } from "@/composables/useTasks";
 import { useTheme } from "@/composables/useTheme";
+import { onSessionChange } from "@/composables/useSessionBound";
+import { isMutationSlow } from "@/services/slowRequests";
 import { CATEGORY_PRESETS, nextPresetColor } from "@/lib/categoryPalette";
 import { blockColors, contrastRatio, isHex, normalizeHex } from "@/lib/color";
 import { formatTimeOfDay } from "@/lib/datetime";
@@ -26,6 +28,11 @@ const emit = defineEmits<{ saved: [category: Category] }>();
 
 const { categories, addCategory, updateCategory } = useTasks();
 const { resolvedTheme } = useTheme();
+
+// The category belongs to the session it was opened in: close when that session ends.
+onSessionChange(() => {
+  open.value = false;
+});
 
 const isEditing = computed(() => !!props.categoryToEdit);
 const name = ref("");
@@ -240,7 +247,7 @@ async function save(): Promise<void> {
     <template #footer="{ close }">
       <UiButton variant="ghost" @click="close('button')">Cancel</UiButton>
       <UiButton variant="primary" type="submit" form="category-form" :loading="saving">
-        {{ isEditing ? "Save" : "Add category" }}
+        {{ saving && isMutationSlow ? "Waking up the server…" : isEditing ? "Save" : "Add category" }}
       </UiButton>
     </template>
   </UiDialog>
