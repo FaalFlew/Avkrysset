@@ -28,17 +28,25 @@ task hangs on the cold start; the user logs out, starts using the guest planner,
 - Tests: refresh-during-logout race, response-after-logout, logout while the server is unreachable.
 - Related infrastructure option: Azure App Service **Always On** removes cold starts (needs Basic tier or higher — a cost decision).
 
-### 2. Smart default duration when creating a task in a gap — SMALL
+### 2. Smart default duration when creating a task in a gap — SMALL — DONE (feature/planner-quick-wins, 2026-10-24)
 **Requested 2026-10-23.** Clicking/hovering a free slot always suggests 1 hour, even when only 30 minutes are free before the
 next task. **Agreed rule:** default = min(1 hour, free time from the chosen start until the next task in that day column),
 rounded down to the 15-minute grid, minimum 15 minutes. Applies to the hover preview, click-to-create and keyboard create (N);
 drag-to-create keeps the dragged length. Count every visible task in the column (personal + assigned org tasks) since overlaps
 with them are blocked. The editor's duration chips stay available to pick longer (the overlap check still applies).
+**Done:** `src/lib/newTaskDuration.ts` — the next task counts even on a later day; < 15 min free keeps 15 min with a note in
+the editor ("Only 10 min free before “Standup”."). Also N/C, the FAB and Today's "Add task". Today's free-gap button still
+fills the gap up to 1 hour unrounded (unchanged).
 
-### 3. Copy and paste tasks — SMALL–MEDIUM
+### 3. Copy and paste tasks — SMALL–MEDIUM — DONE (feature/planner-quick-wins, 2026-10-24)
 Ctrl/⌘ C on a focused task → Ctrl/⌘ V on a chosen slot (keeps title, duration, category, template); phones: long-press menu
 "Copy" → tap a slot → "Paste here"; "Duplicate to next day/week". Normal overlap rules; copying a read-only org task creates a
 personal copy. Do together with item 2 ("planner quick wins") or as the first part of Phase 3 (so it works in the org schedule too).
+**Done:** Ctrl/⌘+C / Ctrl/⌘+V (pointer slot → after the focused task → selected day), right-click menu (Copy, Duplicate to
+next day/week, Paste here), editor "More actions" (Copy → "Tap a time to paste" banner, Duplicate) for phones. Copies are
+always personal tasks (org tasks I created too — no org-create step in the planner yet; revisit in Phase 3's org schedule).
+Undo toast deletes the copy; the copy is session-bound (`stores/clipboardStore.ts`). Phones use the editor menu instead of a
+long-press menu (long-press stays drag).
 
 ## Later
 
