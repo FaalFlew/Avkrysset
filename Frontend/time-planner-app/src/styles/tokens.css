@@ -1,0 +1,199 @@
+/* src/styles/tokens.css — Time Planner design tokens. Theme via <html data-theme="light|dark">. */
+:root {
+  /* Typography */
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --fs-11: 0.6875rem; --lh-11: 1rem;      /* micro: weekday caps, kbd, time gutter */
+  --fs-12: 0.75rem;   --lh-12: 1rem;      /* caption, badges, table head, hints, task meta */
+  --fs-13: 0.8125rem; --lh-13: 1.125rem;  /* labels, small buttons, secondary body, task title */
+  --fs-14: 0.875rem;  --lh-14: 1.25rem;   /* body, buttons, inputs, nav */
+  --fs-15: 0.9375rem; --lh-15: 1.375rem;  /* section/card titles, Today row titles */
+  --fs-17: 1.0625rem; --lh-17: 1.5rem;    /* editor title field, mobile page title */
+  --fs-20: 1.25rem;   --lh-20: 1.75rem;   /* page H1, auth headings */
+  --fs-24: 1.5rem;    --lh-24: 2rem;      /* Today date H1 */
+  --fs-28: 1.75rem;   --lh-28: 2.25rem;   /* KPI values (proportional figures) */
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+  --tracking-tight: -0.011em;  /* >= 17px */
+  --tracking-tighter: -0.019em;/* >= 24px */
+  --tracking-caps: 0.06em;     /* 11px uppercase micro labels */
+
+  /* Spacing (4px grid) */
+  --space-0-5: 2px; --space-1: 4px; --space-1-5: 6px; --space-2: 8px; --space-2-5: 10px;
+  --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --space-10: 40px; --space-12: 48px; --space-16: 64px;
+
+  /* Radii */
+  --radius-xs: 4px;   /* kbd, inner chips */
+  --radius-sm: 6px;   /* task blocks, badges, tooltips, segmented thumb, calendar day cells */
+  --radius-md: 8px;   /* buttons, inputs, selects, nav items, menu items, segmented track */
+  --radius-lg: 12px;  /* cards, popovers, dialogs */
+  --radius-xl: 16px;  /* bottom-sheet top corners */
+  --radius-full: 9999px; /* dots, avatar, FAB, category chips, progress */
+
+  /* Control sizing */
+  --control-h-sm: 28px; --control-h-md: 36px; --control-h-lg: 44px;
+  --input-font-size: var(--fs-14);
+
+  /* Layout */
+  --sidebar-w: 248px; --rail-w: 56px; --header-h: 56px; --tabbar-h: 56px;
+  --content-max: 1200px; --content-narrow: 720px; --content-medium: 960px;
+  --hour-h: 60px; --gutter-w: 56px; --dayhead-h: 56px; --day-min-w: 88px;
+  --toast-offset: 24px;
+
+  /* Z-index */
+  --z-grid-task: 2; --z-grid-now: 3; --z-grid-drag: 5; --z-grid-sticky: 10; --z-grid-corner: 11;
+  --z-sticky: 20; --z-sidebar: 30; --z-tabbar: 40; --z-popover: 50; --z-modal: 100;
+  --z-toast: 200; --z-tooltip: 300;
+
+  /* Motion */
+  --dur-fast: 150ms;  /* hover, color, focus */
+  --dur-base: 200ms;  /* popovers, menus, segmented thumb, chart transitions, toasts */
+  --dur-slow: 250ms;  /* dialogs, sheets, sidebar collapse */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Category presets (same hex in both themes; order = default assignment order) */
+  --cat-blue: #2F7FE0; --cat-orange: #DA6A1C; --cat-teal: #0E9C8C; --cat-purple: #8E55CC;
+  --cat-amber: #B87D10; --cat-pink: #D3449E; --cat-green: #3D9A50; --cat-indigo: #5E6AD2;
+  --cat-red: #E0484E; --cat-sky: #0A95B8; --cat-olive: #7A9620; --cat-slate: #7D8590; /* slate = neutral/"Other" */
+}
+@media (max-width: 767.98px) {
+  :root { --toast-offset: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom, 0px)); --gutter-w: 48px; }
+}
+@media (pointer: coarse) {
+  :root { --control-h-sm: 40px; --control-h-md: 44px; --control-h-lg: 48px; --input-font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+}
+
+:root, [data-theme="light"] {
+  color-scheme: light;
+  /* Backgrounds */
+  --bg-app: #FFFFFF;        /* main content */
+  --bg-sidebar: #F7F7F8;
+  --bg-surface: #FFFFFF;    /* cards (border, no shadow) */
+  --bg-raised: #FFFFFF;     /* popovers, menus, dialogs, sheets (border + shadow) */
+  --bg-subtle: #F4F4F5;     /* hover */
+  --bg-muted: #EBEBEE;      /* selected/pressed neutral, tracks */
+  --bg-inset: #FAFAFB;      /* table header, grid header */
+  --bg-input: #FFFFFF;
+  --bg-inverse: #1C1C21;    /* tooltip */
+  --bg-scrim: rgb(15 15 20 / 0.32);
+  /* Borders */
+  --border-subtle: #EEEEF0;
+  --border-default: #E4E4E7;
+  --border-strong: #D4D4D8;
+  --border-input: #8E8E98;        /* 3.24:1 on white */
+  --border-input-hover: #67676F;
+  /* Text */
+  --text-primary: #18181B;    /* 17.72:1 on #FFF */
+  --text-secondary: #52525B;  /* 7.73:1 */
+  --text-tertiary: #67676F;   /* 5.61:1 on #FFF, 4.71:1 on --bg-muted */
+  --text-disabled: #A1A1AA;
+  --text-inverse: #F4F4F5;
+  --text-inverse-secondary: #A1A1AA;
+  --text-on-accent: #FFFFFF;
+  /* Accent (indigo) */
+  --accent: #4F5BD5;          /* white text 5.54:1 */
+  --accent-hover: #434DC0;    /* 6.86:1 */
+  --accent-active: #3A43AB;   /* 8.17:1 */
+  --accent-text: #434DC0;     /* links/active text; 6.86 on #FFF, 6.05 on --accent-subtle */
+  --accent-subtle: #EEF0FD;
+  --accent-subtle-hover: #E4E7FB;
+  --accent-border: #C7CCF5;
+  --focus-ring: #4F5BD5;
+  --focus-ring-soft: rgb(79 91 213 / 0.22);
+  /* Status */
+  --success-solid: #1F9D5C; --success-text: #18794E; --success-subtle: #E8F5EE;
+  --warning-solid: #B26B00; --warning-text: #9A5B00; --warning-subtle: #FFF4E0;
+  --danger: #D93036;          /* solid bg; white 4.74:1 */
+  --danger-hover: #C42A30;
+  --danger-text: #C42A30;     /* 5.64 on #FFF, 4.98 on subtle */
+  --danger-subtle: #FDEDED;
+  --danger-border: #F5C2C4;
+  /* Planner grid */
+  --grid-bg: #FFFFFF;
+  --grid-line: #EDEDF0;
+  --grid-line-half: #F6F6F8;
+  --grid-weekend: #FAFAFB;
+  --grid-today: rgb(79 91 213 / 0.035);
+  --grid-hover: rgb(79 91 213 / 0.07);
+  --now: #E5484D;
+  --now-pill-bg: #D93036; --now-pill-text: #FFFFFF;
+  --block-tint: 14%; --block-tint-hover: 20%;
+  --block-text: var(--text-primary); --block-meta: var(--text-secondary);
+  /* Charts */
+  --chart-text: #52525B; --chart-text-muted: #67676F; --chart-grid: #EDEDF0; --chart-axis: #D4D4D8;
+  --chart-bar: #4F5BD5; --chart-bar-hover: #434DC0; --chart-neutral: #A1A1AA; --chart-slice-gap: #FFFFFF;
+  /* Toast (inverse surface) */
+  --toast-bg: #1C1C21; --toast-text: #F4F4F5; --toast-text-secondary: #A1A1AA;
+  --toast-success: #4CC38A; --toast-danger: #FF7A7F; --toast-info: #9BA4FF; --toast-action: #9BA4FF;
+  /* Elevation */
+  --shadow-xs: 0 1px 2px rgb(16 16 20 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(16 16 20 / 0.06), 0 1px 3px rgb(16 16 20 / 0.08);
+  --shadow-md: 0 4px 12px -2px rgb(16 16 20 / 0.10), 0 2px 4px -2px rgb(16 16 20 / 0.06);
+  --shadow-lg: 0 16px 40px -8px rgb(16 16 20 / 0.18), 0 4px 10px -4px rgb(16 16 20 / 0.08);
+}
+
+/* Dark tokens never apply on paper: printing always uses the light tokens above (the print
+   path in usePrintMode also switches <html data-theme> so charts redraw in light colors). */
+@media not print {
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg-app: #141416;
+    --bg-sidebar: #101012;
+    --bg-surface: #18181B;
+    --bg-raised: #1E1E22;
+    --bg-subtle: #232328;
+    --bg-muted: #2A2A30;
+    --bg-inset: #161618;
+    --bg-input: #121214;
+    --bg-inverse: #EDEDEF;
+    --bg-scrim: rgb(0 0 0 / 0.6);
+    --border-subtle: #232328;
+    --border-default: #2E2E35;
+    --border-strong: #3F3F48;
+    --border-input: #6A6A74;        /* 3.31 on #18181B, 3.50 on --bg-input */
+    --border-input-hover: #85858F;
+    --text-primary: #EDEDEF;    /* 15.15 on #18181B */
+    --text-secondary: #A1A1AA;  /* 6.91 on #18181B, 5.57 on --bg-muted */
+    --text-tertiary: #909099;   /* 5.60 on #18181B, 4.51 on --bg-muted */
+    --text-disabled: #5A5A63;
+    --text-inverse: #18181B;
+    --text-inverse-secondary: #52525B;
+    --text-on-accent: #FFFFFF;
+    --accent: #5560DB;          /* white 5.14 */
+    --accent-hover: #5D68E2;    /* white 4.62 */
+    --accent-active: #4A54C8;   /* white 6.19 */
+    --accent-text: #9BA4FF;     /* 7.72 on #18181B, 6.59 on subtle */
+    --accent-subtle: #22243D;
+    --accent-subtle-hover: #2A2D4A;
+    --accent-border: #3D4380;
+    --focus-ring: #8D97FA;      /* 6.70 on #18181B */
+    --focus-ring-soft: rgb(141 151 250 / 0.28);
+    --success-solid: #3DBE7E; --success-text: #4CC38A; --success-subtle: #12291E;
+    --warning-solid: #F0B44C; --warning-text: #F0B44C; --warning-subtle: #2C2112;
+    --danger: #D93036; --danger-hover: #C42A30;
+    --danger-text: #FF7A7F;     /* 7.04 on #18181B */
+    --danger-subtle: #2F1517; --danger-border: #5C2326;
+    --grid-bg: #141416;
+    --grid-line: #232328;
+    --grid-line-half: #1B1B1F;
+    --grid-weekend: #121214;
+    --grid-today: rgb(141 151 250 / 0.045);
+    --grid-hover: rgb(141 151 250 / 0.08);
+    --now: #FF5A60;
+    --now-pill-bg: #FF5A60; --now-pill-text: #18181B;
+    --block-tint: 22%; --block-tint-hover: 30%;
+    --chart-text: #A1A1AA; --chart-text-muted: #909099; --chart-grid: #26262C; --chart-axis: #3F3F48;
+    --chart-bar: #7C86F0; --chart-bar-hover: #9BA4FF; --chart-neutral: #5A5A63; --chart-slice-gap: #18181B;
+    --toast-bg: #EDEDEF; --toast-text: #18181B; --toast-text-secondary: #52525B;
+    --toast-success: #18794E; --toast-danger: #C42A30; --toast-info: #434DC0; --toast-action: #434DC0;
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.5);
+    --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.04);
+    --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.65), 0 0 0 1px rgb(255 255 255 / 0.05);
+  }
+}

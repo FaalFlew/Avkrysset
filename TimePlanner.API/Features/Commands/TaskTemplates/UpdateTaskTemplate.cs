@@ -1,0 +1,65 @@
+using FluentValidation;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+using TimePlanner.API.Data;
+using TimePlanner.API.Features.Commands.Tasks;
+using TimePlanner.API.Services;
+
+namespace TimePlanner.API.Features.Commands.TaskTemplates;
+
+public record UpdateTaskTemplateCommand(Guid Id, string Title, double Duration, Guid CategoryId) : IRequest;
+
+public class UpdateTaskTemplateCommandValidator : AbstractValidator<UpdateTaskTemplateCommand>
+{
+    public UpdateTaskTemplateCommandValidator()
+    {
+        RuleFor(x => x.Id).NotEmpty().WithMessage("Template id is required.");
+        RuleFor(x => x.Title)
+            .NotEmpty().WithMessage("Template title is required.")
+            .MaximumLength(200).WithMessage("Template title can be at most 200 characters.");
+        RuleFor(x => x.Duration)
+            .GreaterThan(0).WithMessage(TaskRules.DurationMustBePositive)
+            .LessThanOrEqualTo(TaskRules.MaxDurationHours).WithMessage(TaskRules.DurationTooLong);
+        RuleFor(x => x.CategoryId).NotEmpty().WithMessage(TaskRules.CategoryRequired);
+    }
+}
+
+public class UpdateTaskTemplateCommandHandler : IRequestHandler<UpdateTaskTemplateCommand>
+{
+    private readonly ApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
+
+    public UpdateTaskTemplateCommandHandler(ApplicationDbContext context, ICurrentUserService currentUserService)
+    {
+        _context = context;
+        _currentUserService = currentUserService;
+    }
+
+    public async Task Handle(UpdateTaskTemplateCommand request, CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.UserId;
+        if (userId == null) throw new UnauthorizedAccessException();
+
+        // Security Check: Ensure the category exists and belongs to the current user.
+        var categoryExists = await _context.Categories
+            .AnyAsync(c => c.Id == request.CategoryId && c.UserId == userId, cancellationToken);
+        if (!categoryExists)
+        {
+            throw new ValidationException($"Category with ID {request.CategoryId} not found for this user.");
+        }
+
+        var template = await _context.TaskTemplates
+            .FirstOrDefaultAsync(tt => tt.Id == request.Id && tt.UserId == userId, cancellationToken);
+
+        if (template == null)
+        {
+            throw new KeyNotFoundException($"Task Template with ID {request.Id} not found.");
+        }
+
+        template.Title = request.Title;
+        template.Duration = request.Duration;
+        template.CategoryId = request.CategoryId;
+
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+}

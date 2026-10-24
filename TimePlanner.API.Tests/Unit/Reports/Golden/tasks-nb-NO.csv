@@ -1,0 +1,15 @@
+﻿# Time Planner task list export
+# Range: Week 40 of 2026 (28.09.2026 – 04.10.2026)
+# Time zone: Europe/Oslo (UTC+02:00)
+# Generated: 2026-10-05 10:00 (Europe/Oslo)
+# Document ID: TP-20261005-ABCD1234
+Date;Weekday;Start;End;End date;Duration (h);Duration;Title;Category;Template;Organization;Created by;Assigned to;Created at
+2026-09-28;mandag;08:00;09:30;2026-09-28;1,50;1:30;Deep work;Work;'-Standup;;Ada Lovelace;;2026-09-01 12:15
+2026-09-29;tirsdag;09:00;09:30;2026-09-29;0,50;0:30;"'=HYPERLINK(""http://x"")";Gym;;;Ada Lovelace;;2026-09-01 12:15
+2026-09-30;onsdag;22:00;01:00;2026-10-01;3,00;3:00;"Ops, ""night""; shifts
+line 2";Work;Deleted template;;Ada Lovelace;;2026-09-01 12:15
+2026-10-01;torsdag;09:00;09:20;2026-10-01;0,33;0:20;Warehouse;Acme AS;;Acme AS;Grace Hopper;Ada Lovelace, Bob Builder;2026-09-16 01:30
+2026-10-02;fredag;10:00;19:30;2026-11-22;1234,50;1234:30;قراءة كتاب;Work;;;Ada Lovelace;;2026-09-01 12:15
+2026-10-03;lørdag;11:00;11:15;2026-10-03;0,25;0:15;;Work;;;Ada Lovelace;;2026-09-01 12:15
+2026-10-04;søndag;10:00;11:00;2026-10-04;1,00;1:00;B task;Work;;;Ada Lovelace;;2026-09-01 12:15
+2026-10-04;søndag;10:00;11:00;2026-10-04;1,00;1:00;b task;Work;;;Ada Lovelace;;2026-09-01 12:15

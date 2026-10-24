@@ -1,0 +1,37 @@
+[{
+	"resource": "/C:/Users/majds/OneDrive/Desktop/Tasksched2/time-planner-app/src/components/TaskAnalytics.vue",
+	"owner": "typescript",
+	"code": "2339",
+	"severity": 8,
+	"message": "Property 'getWeekDateRange' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<{}, {}>, { Bar: TypedChartComponent<\"bar\", (number | [number, number] | null)[] | ExtendedDataPoint[], unknown>; ... 13 more ...; dynamicHint: ComputedRef<...>; }, ... 23 more ..., {}>'.",
+	"source": "ts-plugin",
+	"startLineNumber": 106,
+	"startColumn": 35,
+	"endLineNumber": 106,
+	"endColumn": 51,
+	"origin": "extHost1"
+},{
+	"resource": "/C:/Users/majds/OneDrive/Desktop/Tasksched2/time-planner-app/src/composables/useStats.ts",
+	"owner": "typescript",
+	"code": "2304",
+	"severity": 8,
+	"message": "Cannot find name 'analyticsData'.",
+	"source": "ts",
+	"startLineNumber": 348,
+	"startColumn": 35,
+	"endLineNumber": 348,
+	"endColumn": 48,
+	"origin": "extHost1"
+},{
+	"resource": "/C:/Users/majds/OneDrive/Desktop/Tasksched2/time-planner-app/src/composables/useStats.ts",
+	"owner": "typescript",
+	"code": "7006",
+	"severity": 8,
+	"message": "Parameter 'd' implicitly has an 'any' type.",
+	"source": "ts",
+	"startLineNumber": 349,
+	"startColumn": 22,
+	"endLineNumber": 349,
+	"endColumn": 23,
+	"origin": "extHost1"
+}]

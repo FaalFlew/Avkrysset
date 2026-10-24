@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Time Planner</title>
+    <meta
+      name="description"
+      content="Plan your week in time blocks, see where your time goes, and reuse templates for the tasks you repeat."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141416" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      Pre-paint theme: runs before CSS so the first frame already has the right theme.
+      Keep in sync with src/composables/useTheme.ts (storage key "tp-theme", values light|dark|system).
+    -->
+    <script>
+      (function () {
+        var mode = "system";
+        try {
+          var stored = localStorage.getItem("tp-theme");
+          if (stored === "light" || stored === "dark" || stored === "system") mode = stored;
+        } catch (e) {}
+        var dark =
+          mode === "dark" ||
+          (mode === "system" && !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var theme = dark ? "dark" : "light";
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.colorScheme = theme;
+        if (mode !== "system") {
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", dark ? "#141416" : "#FFFFFF");
+        }
+      })();
+    </script>
+    <style>
+      /* Paint the page background before the stylesheet arrives (no white flash in dark mode). */
+      html { background-color: #ffffff; }
+      html[data-theme="dark"] { background-color: #141416; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
