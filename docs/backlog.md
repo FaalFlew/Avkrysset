@@ -64,6 +64,9 @@ calendar filtered by project (one calendar catches double-bookings across projec
 
 ### 7. Small pre-existing issues found during reviews — SMALL
 - Creating a category with a duplicate name returns 500 instead of a readable 409/400 (unique index violation).
+- `CreateTask` / `UpdateTask` verify that the category belongs to the user but not the `TemplateId`: a user can reference another
+  user's template id, whose title then appears in their own analytics/report template breakdown (small info leak). Validate
+  template ownership (the frontend only sends the user's own template ids since the copy/paste work).
 - The API logs "Confirmation email sent" even when no Postmark token is configured (nothing is sent; misleading log).
 - The CSV formula-injection guard doesn't treat a leading `\r` as dangerous (client and server).
 - Report CSVs requested without `locale` fall back to invariant labels ("2026 January – 2026 December"); the app always sends
