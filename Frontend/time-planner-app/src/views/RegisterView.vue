@@ -2,7 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { useAuthStore } from "@/stores/authStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useRouter, RouterLink } from "vue-router";
+import { useRoute, useRouter, RouterLink } from "vue-router";
+import { safeRedirect } from "@/lib/authRedirect";
 import { useUIStore } from "@/stores/uiStore";
 import { CircleAlert } from "lucide-vue-next";
 import AuthLayout from "@/components/auth/AuthLayout.vue";
@@ -21,6 +22,16 @@ const password = ref("");
 const authStore = useAuthStore();
 const taskStore = useTaskStore();
 const router = useRouter();
+const route = useRoute();
+
+/** "Log in" keeps where the user was going (e.g. an invitation link). */
+const loginLink = computed(() => {
+  const query: Record<string, string> = {};
+  const redirect = safeRedirect(route.query.redirect);
+  if (redirect) query.redirect = redirect;
+  if (route.query.reason === "orgs") query.reason = "orgs";
+  return { path: "/login", query };
+});
 
 // Inline feedback
 const passwordError = ref("");
@@ -151,7 +162,7 @@ async function handleRegister() {
     </form>
 
     <template #footer>
-      <p>Already have an account? <RouterLink to="/login">Log in</RouterLink></p>
+      <p>Already have an account? <RouterLink :to="loginLink">Log in</RouterLink></p>
     </template>
   </AuthLayout>
 </template>

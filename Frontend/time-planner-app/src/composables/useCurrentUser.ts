@@ -19,6 +19,12 @@ export function userIdFromToken(token: string | null | undefined): string | null
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
+/** The email of a JWT access token (`email` claim), or null when it can't be read. */
+export function userEmailFromToken(token: string | null | undefined): string | null {
+  const email = jwtClaims(token)?.email;
+  return typeof email === "string" && email.trim() ? email.trim() : null;
+}
+
 /** Fallback cache: the profile id fetched for a session (refresh token). */
 const fetched = ref<{ session: string; id: string } | null>(null);
 let pendingSession: string | null = null;

@@ -27,7 +27,7 @@ const GROUPS: { title: string; items: Shortcut[]; note?: string }[] = [
     title: "General",
     items: [
       { keys: [["N"], ["C"]], label: "New task" },
-      { keys: [["1"], ["2"], ["3"], ["4"]], label: "Planner · Today · Analytics · Templates" },
+      { keys: [["1"], ["2"], ["3"], ["4"]], label: "Planner · Today · Analytics · Templates (in Personal)" },
       { keys: [["["]], label: "Collapse or expand the sidebar" },
       { keys: [["Mod", "Z"]], label: "Undo the last delete, move, paste or duplicate" },
       { keys: [["?"]], label: "Show keyboard shortcuts" },
@@ -58,6 +58,17 @@ const GROUPS: { title: string; items: Shortcut[]; note?: string }[] = [
       { keys: [["Mod", "C"]], label: "Copy" },
       { keys: [["Shift", "F10"]], label: "More actions (copy, duplicate to the next day or week)" },
     ],
+  },
+  {
+    title: "Organizations",
+    items: [
+      { keys: [["O"]], label: "Switch workspace (Personal or an organization)" },
+      { keys: [["1"], ["2"], ["3"], ["4"]], label: "Schedule · Board · Analytics · Members (in an organization)" },
+      { keys: [["M"]], label: "Board: move the selected card to another panel" },
+      { keys: [["P"]], label: "Board: schedule the selected card as a task" },
+      { keys: [["Enter"]], label: "Board: open the selected card" },
+    ],
+    note: "The number keys follow the workspace you're in.",
   },
   {
     title: "Task editor",

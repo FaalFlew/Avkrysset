@@ -12,6 +12,7 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import router from "./router";
 import { setupTaskStoreSubscribers } from "./stores/taskStore";
+import { setupOrgStoreSubscribers } from "./stores/orgStore";
 import { syncSessionAcrossTabs } from "./stores/authStore";
 import { initTheme } from "./composables/useTheme";
 
@@ -25,6 +26,9 @@ app.use(router);
 
 // Persist guest data to localStorage.
 setupTaskStoreSubscribers();
+
+// Organizations: load after sign-in, reset on session change, re-check a membership on 403.
+setupOrgStoreSubscribers();
 
 // Follow logouts / token refreshes of other tabs (they share the tokens in localStorage).
 syncSessionAcrossTabs();

@@ -20,7 +20,7 @@ export type HotkeyHandler = (event: KeyboardEvent) => boolean | void;
 export type HotkeyMap = Record<string, HotkeyHandler>;
 
 /** Keys that must not auto-repeat (holding N should not open the editor 30 times). */
-const NO_REPEAT = new Set(["n", "c", "t", "1", "2", "3", "4"]);
+const NO_REPEAT = new Set(["n", "c", "t", "o", "1", "2", "3", "4"]);
 
 const scopes: HotkeyMap[] = [];
 let globalMap: HotkeyMap = {};

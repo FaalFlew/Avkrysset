@@ -461,6 +461,154 @@ export function formatZoneLabelForRange(range: InstantRange): string {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Other time zones (organizations)
+// ---------------------------------------------------------------------------------------------
+// Planners always render in the device zone (D5); organizations have their own zone for analytics
+// and reports. These helpers only LABEL and COMPARE another zone — ranges in an org's zone are
+// resolved by the server (send the selection, never compute them here).
+
+/** Wall-clock parts formatter per zone (independent of the device zone); null = unknown zone. */
+const zonePartsFormatters = new Map<string, Intl.DateTimeFormat | null>();
+
+function zonePartsFormatter(zone: string): Intl.DateTimeFormat | null {
+  const cached = zonePartsFormatters.get(zone);
+  if (cached !== undefined) return cached;
+  let f: Intl.DateTimeFormat | null = null;
+  try {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+  } catch {
+    f = null; // RangeError: not an IANA zone this engine knows
+  }
+  if (zonePartsFormatters.size > 200) zonePartsFormatters.clear();
+  zonePartsFormatters.set(zone, f);
+  return f;
+}
+
+/** UTC offset (minutes east) of `zone` at `t`, or null when the zone is unknown. */
+function zoneOffsetMinutesAt(zone: string, t: EpochMs): number | null {
+  const f = zonePartsFormatter(zone);
+  if (!f) return null;
+  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+  for (const part of f.formatToParts(t)) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
+  }
+  const wall = utcMs(
+    parts.year ?? 1970,
+    (parts.month ?? 1) - 1,
+    parts.day ?? 1,
+    (parts.hour ?? 0) % 24,
+    parts.minute ?? 0,
+    parts.second ?? 0
+  );
+  // formatToParts drops the milliseconds.
+  return Math.round((wall - Math.floor(t / 1000) * 1000) / MINUTE_MS);
+}
+
+/** Whether this engine knows `zone` as an IANA time zone (aliases like "Asia/Calcutta" included). */
+export function isValidTimeZone(zone: string): boolean {
+  return typeof zone === "string" && zone.length > 0 && zonePartsFormatter(zone) !== null;
+}
+
+/**
+ * `"America/New_York (UTC-04:00)"`: an explicit zone with its offset at `at` (default now), in the
+ * same format as the server's labels; `"UTC"` for UTC; an unknown zone is returned as is.
+ */
+export function formatZoneLabel(zone: string, at: InstantInput = now()): string {
+  const offset = zoneOffsetMinutesAt(zone, toEpochMs(at));
+  if (offset === null) return zone;
+  if ((zone === "UTC" || zone === "Etc/UTC") && offset === 0) return "UTC";
+  return `${zone} (UTC${offsetText(offset)})`;
+}
+
+/**
+ * Time of an instant on the wall clock of `zone` (the display locale's clock): `"03:00"` /
+ * `"3:00 AM"`. Falls back to the device zone for an unknown zone.
+ */
+export function formatTimeInZone(at: InstantInput, zone: string): string {
+  if (!isValidTimeZone(zone)) return formatTime(at);
+  return formatter({ ...timeOptions(), timeZone: zone }).format(toEpochMs(at));
+}
+
+/**
+ * Whether wall-clock times in `zone` differ from the device zone at any moment of the half-open
+ * `range` (e.g. to show "Times are in your time zone; Acme uses America/New_York"). Compares
+ * OFFSETS, so alias names ("Asia/Calcutta" vs "Asia/Kolkata") and zones that agree during the
+ * range count as equal. Sampled every 12 hours plus the last instant; where either zone changes
+ * its offset between two samples (DST), that stretch is re-checked every 15 minutes, so zones
+ * switching at different hours of the same day are caught. An unknown zone never differs.
+ */
+export function zoneDiffersFromActive(zone: string, range: InstantRange): boolean {
+  const start = toEpochMs(range.start);
+  const end = toEpochMs(range.end);
+  const last = end > start ? end - 1 : start;
+  if (zoneOffsetMinutesAt(zone, start) === null) return false;
+
+  const differsAt = (t: number) => zoneOffsetMinutesAt(zone, t) !== getUtcOffsetMinutes(t);
+  const changedBetween = (a: number, b: number) =>
+    zoneOffsetMinutesAt(zone, a) !== zoneOffsetMinutesAt(zone, b) || getUtcOffsetMinutes(a) !== getUtcOffsetMinutes(b);
+
+  if (differsAt(start)) return true;
+  const STEP = 12 * HOUR_MS;
+  const FINE_STEP = 15 * MINUTE_MS;
+  let previous = start;
+  for (let t = Math.min(start + STEP, last); ; t = Math.min(t + STEP, last)) {
+    if (t > previous) {
+      if (differsAt(t)) return true;
+      if (changedBetween(previous, t)) {
+        for (let u = previous + FINE_STEP; u < t; u += FINE_STEP) if (differsAt(u)) return true;
+      }
+      previous = t;
+    }
+    if (t >= last) return false;
+  }
+}
+
+/** Common zones for engines without `Intl.supportedValuesOf` (filtered to what the engine knows). */
+const FALLBACK_TIME_ZONES = [
+  "UTC", "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin", "Europe/Oslo",
+  "Europe/Stockholm", "Europe/Copenhagen", "Europe/Amsterdam", "Europe/Madrid", "Europe/Rome", "Europe/Warsaw",
+  "Europe/Athens", "Europe/Helsinki", "Europe/Istanbul", "Europe/Kyiv", "Europe/Moscow", "Africa/Cairo",
+  "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi", "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata",
+  "Asia/Kathmandu", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta", "Asia/Singapore", "Asia/Shanghai",
+  "Asia/Hong_Kong", "Asia/Manila", "Asia/Tokyo", "Asia/Seoul", "Australia/Perth", "Australia/Adelaide",
+  "Australia/Brisbane", "Australia/Sydney", "Pacific/Auckland", "Pacific/Honolulu", "America/Anchorage",
+  "America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago", "America/New_York",
+  "America/Toronto", "America/Halifax", "America/St_Johns", "America/Mexico_City", "America/Bogota",
+  "America/Lima", "America/Santiago", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+];
+
+let supportedZonesCache: string[] | null = null;
+
+/**
+ * IANA zones for a zone picker, sorted: `Intl.supportedValuesOf('timeZone')` (a common-zone list on
+ * older engines), always including "UTC" and the device zone.
+ */
+export function supportedTimeZones(): string[] {
+  if (!supportedZonesCache) {
+    let zones: string[] = [];
+    try {
+      const intl = Intl as unknown as { supportedValuesOf?: (key: "timeZone") => string[] };
+      if (typeof intl.supportedValuesOf === "function") zones = intl.supportedValuesOf("timeZone");
+    } catch {
+      zones = [];
+    }
+    if (zones.length === 0) zones = FALLBACK_TIME_ZONES.filter(isValidTimeZone);
+    supportedZonesCache = [...zones];
+  }
+  const all = new Set([...supportedZonesCache, "UTC", getActiveTimeZone()]);
+  return [...all].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+// ---------------------------------------------------------------------------------------------
 // Parsing and serialization
 // ---------------------------------------------------------------------------------------------
 

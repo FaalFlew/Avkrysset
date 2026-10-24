@@ -271,6 +271,16 @@ async function getMyProfile(): Promise<UserProfile> {
 }
 
 /**
+ * Set my display name (PUT /api/users/me): trimmed, ≤ 100 characters; empty clears it (the org UI
+ * then shows the email). Returns the updated profile.
+ */
+async function updateMyProfile(data: { displayName: string | null }): Promise<UserProfile> {
+  const displayName = data.displayName?.trim() ?? "";
+  const response = await apiService.put<UserProfile>("/users/me", { displayName });
+  return { ...response.data, displayName: response.data.displayName?.trim() || null };
+}
+
+/**
  * Analytics for tasks starting in `[range.start, range.end)`. Breakdown buckets follow the
  * calendar of the `X-Time-Zone` header (see `src/lib/analyticsBuckets.ts`).
  */
@@ -304,6 +314,7 @@ export const apiDataService = {
   deleteOrganizationTask,
   createOrganizationTask,
   getMyProfile,
+  updateMyProfile,
   getTaskAnalytics,
   getTaskYears,
   getTasksForDay,

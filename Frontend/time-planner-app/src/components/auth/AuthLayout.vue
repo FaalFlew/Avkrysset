@@ -210,6 +210,12 @@ defineExpose({ focusHeading });
 :slotted(.auth-alert .lucide) {
   margin-top: 1px;
 }
+/* Informational notice (e.g. "Organizations need a free account"). */
+:slotted(.auth-alert--info) {
+  border-color: var(--accent-border);
+  background-color: var(--accent-subtle);
+  color: var(--accent-text);
+}
 :slotted(.auth-hint) {
   font-size: var(--fs-12);
   line-height: var(--lh-12);

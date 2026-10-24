@@ -10,7 +10,7 @@
  */
 import { computed } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { Keyboard, LogIn, LogOut, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-vue-next";
+import { Keyboard, LogIn, LogOut, PanelLeftClose, PanelLeftOpen, Plus, Settings } from "lucide-vue-next";
 import AppLogo from "@/components/ui/AppLogo.vue";
 import UiButton from "@/components/ui/UiButton.vue";
 import UiCard from "@/components/ui/UiCard.vue";
@@ -19,8 +19,9 @@ import UiKbd from "@/components/ui/UiKbd.vue";
 import UiThemeToggle from "@/components/ui/UiThemeToggle.vue";
 import UiTooltip from "@/components/ui/UiTooltip.vue";
 import CalendarDatePicker from "@/components/CalendarDatePicker.vue";
-import { NAV_ITEMS } from "./navItems";
+import ContextSwitcher from "./ContextSwitcher.vue";
 import { logoutAndRedirect } from "./useShell";
+import { useWorkspace } from "./useWorkspace";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";
 import { useTaskEditor } from "@/composables/useTaskEditor";
@@ -39,8 +40,12 @@ const uiStore = useUIStore();
 const editor = useTaskEditor();
 const { isDesktop, isCoarse } = useBreakpoint();
 
+const { navItems } = useWorkspace();
+
 const isAuthenticated = computed(() => authStore.isAuthenticated);
-const showCalendar = computed(() => route.name === "Planner" || route.name === "Today");
+/** Pages with a week grid (the date picker moves it). */
+const PLANNER_PAGES = new Set(["Planner", "OrgSchedule"]);
+const showCalendar = computed(() => route.name === "Planner" || route.name === "Today" || route.name === "OrgSchedule");
 const collapseShortcut = computed(() => (isDesktop.value ? ["["] : undefined));
 
 function newTask(): void {
@@ -49,7 +54,11 @@ function newTask(): void {
 }
 
 function onPickDate(_day: DateKey): void {
-  if (route.name !== "Planner") void router.push("/");
+  if (!PLANNER_PAGES.has(String(route.name))) void router.push("/");
+  if (props.inDrawer) emit("close");
+}
+
+function onSwitch(): void {
   if (props.inDrawer) emit("close");
 }
 
@@ -82,6 +91,8 @@ async function logout(): Promise<void> {
       </UiIconButton>
     </div>
 
+    <ContextSwitcher variant="expanded" :global="!inDrawer" @navigate="onSwitch" />
+
     <UiButton variant="primary" block class="sidebar__new" @click="newTask">
       <template #leading><Plus :size="16" /></template>
       New task
@@ -90,7 +101,7 @@ async function logout(): Promise<void> {
 
     <nav class="sidebar__nav" aria-label="Primary">
       <ul role="list" class="sidebar__nav-list">
-        <li v-for="item in NAV_ITEMS" :key="item.name">
+        <li v-for="item in navItems" :key="item.name">
           <RouterLink :to="item.to" class="nav-item" :aria-keyshortcuts="item.shortcut" @click="inDrawer && emit('close')">
             <component :is="item.icon" class="nav-item__icon" :size="18" />
             <span class="nav-item__label">{{ item.label }}</span>
@@ -125,6 +136,9 @@ async function logout(): Promise<void> {
         >
           <Keyboard :size="16" />
         </UiIconButton>
+        <UiIconButton v-if="isAuthenticated" label="Settings" size="sm" to="/settings" @click="inDrawer && emit('close')">
+          <Settings :size="16" />
+        </UiIconButton>
         <UiIconButton v-if="isAuthenticated" label="Log out" size="sm" @click="logout">
           <LogOut :size="16" />
         </UiIconButton>
@@ -143,6 +157,7 @@ async function logout(): Promise<void> {
     >
       <PanelLeftOpen :size="18" />
     </UiIconButton>
+    <ContextSwitcher variant="rail" global />
     <UiIconButton
       label="New task"
       variant="primary"
@@ -157,8 +172,8 @@ async function logout(): Promise<void> {
 
     <nav class="rail__nav" aria-label="Primary">
       <ul role="list" class="rail__list">
-        <li v-for="item in NAV_ITEMS" :key="item.name">
-          <UiTooltip :text="item.label" :shortcut="[item.shortcut]" placement="right">
+        <li v-for="item in navItems" :key="item.name">
+          <UiTooltip :text="item.label" :shortcut="item.shortcut ? [item.shortcut] : undefined" placement="right">
             <RouterLink :to="item.to" class="rail-item" :aria-label="item.label" :aria-keyshortcuts="item.shortcut">
               <component :is="item.icon" :size="18" />
             </RouterLink>
@@ -177,6 +192,9 @@ async function logout(): Promise<void> {
         @click="uiStore.openShortcuts()"
       >
         <Keyboard :size="16" />
+      </UiIconButton>
+      <UiIconButton v-if="isAuthenticated" label="Settings" to="/settings" tooltip-placement="right">
+        <Settings :size="16" />
       </UiIconButton>
       <UiIconButton v-if="isAuthenticated" label="Log out" tooltip-placement="right" @click="logout">
         <LogOut :size="16" />

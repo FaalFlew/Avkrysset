@@ -30,6 +30,8 @@ function readPref(): SidebarPref | null {
 const pref = ref<SidebarPref | null>(readPref());
 const drawerOpen = ref(false);
 const moreSheetOpen = ref(false);
+/** The workspace switcher menu of the sidebar/rail (the "O" hotkey opens it). */
+const switcherOpen = ref(false);
 
 export function useShell() {
   const { isMobile, isTablet, isWide } = useBreakpoint();
@@ -60,6 +62,7 @@ export function useShell() {
     sidebarMode,
     drawerOpen,
     moreSheetOpen,
+    switcherOpen,
     toggleSidebar,
     closeDrawer: () => {
       drawerOpen.value = false;

@@ -16,8 +16,10 @@ import ShortcutsDialog from "./components/ShortcutsDialog.vue";
 import AppSidebar from "./components/shell/AppSidebar.vue";
 import AppTabBar from "./components/shell/AppTabBar.vue";
 import SidebarDrawer from "./components/shell/SidebarDrawer.vue";
-import { NAV_ITEMS } from "./components/shell/navItems";
+import { navItemForShortcut } from "./components/shell/navItems";
 import { useShell } from "./components/shell/useShell";
+import { useWorkspace } from "./components/shell/useWorkspace";
+import { loginLocation } from "./lib/authRedirect";
 import { useAuthStore } from "./stores/authStore";
 import { useTaskStore } from "./stores/taskStore";
 import { useUIStore } from "./stores/uiStore";
@@ -36,7 +38,8 @@ const route = useRoute();
 const router = useRouter();
 const editor = useTaskEditor();
 const { isMobile, isTablet, isDesktop, isCoarse } = useBreakpoint();
-const { sidebarMode, toggleSidebar } = useShell();
+const { sidebarMode, toggleSidebar, switcherOpen, moreSheetOpen } = useShell();
+const { context } = useWorkspace();
 const { isAuthenticated } = storeToRefs(authStore);
 const { currentDate, announcement } = storeToRefs(uiStore);
 const { timeZone } = useTimeZone();
@@ -46,8 +49,18 @@ const isReady = computed(() => route.matched.length > 0);
 const isAuthLayout = computed(() => route.meta.layout === "auth");
 const isPlanner = computed(() => route.name === "Planner");
 const showFab = computed(
-  () => isMobile.value && (route.name === "Planner" || route.name === "Today") && !editor.state.open
+  () =>
+    isMobile.value &&
+    (route.name === "Planner" || route.name === "Today" || route.name === "OrgSchedule") &&
+    !editor.state.open
 );
+
+// A session that ends underneath a signed-in-only page (logout or expiry in another tab) goes to
+// the login page, which brings the user back here afterwards.
+watch(isAuthenticated, (isAuth) => {
+  if (isAuth || !route.meta.requiresAuth) return;
+  void router.replace(loginLocation(route.fullPath, route.meta.authReason)).catch(() => undefined);
+});
 
 // ---------------------------------------------------------------- data loading
 // Monday (DateKey) of the selected ISO week: tasks are refetched only when the week changes
@@ -110,9 +123,20 @@ const globalKeys: HotkeyMap = {
     if (isAuthLayout.value || isCoarse.value) return false;
     uiStore.openShortcuts();
   },
+  // Workspace switcher (the More sheet on phones, where it is a section).
+  o: guard(() => {
+    if (sidebarMode.value === "hidden") moreSheetOpen.value = true;
+    else switcherOpen.value = true;
+  }),
 };
-for (const item of NAV_ITEMS) {
-  globalKeys[item.shortcut] = guard(() => router.push(item.to));
+// 1–4: the first four pages of the CURRENT workspace (looked up when pressed).
+for (const key of ["1", "2", "3", "4"]) {
+  globalKeys[key] = () => {
+    if (isAuthLayout.value) return false;
+    const item = navItemForShortcut(context.value, key);
+    if (!item) return false;
+    void router.push(item.to);
+  };
 }
 
 let uninstallHotkeys: (() => void) | null = null;

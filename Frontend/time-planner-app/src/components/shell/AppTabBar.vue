@@ -1,21 +1,29 @@
 <script setup lang="ts">
 /**
- * AppTabBar — bottom navigation below 768px: Planner, Today, Analytics, Templates, More.
- * "More" opens AppMoreSheet (account + theme).
+ * AppTabBar — bottom navigation below 768px: the first four pages of the current workspace
+ * (Personal: Planner, Today, Analytics, Templates; an org: Schedule, Board, Analytics, Members),
+ * then More. "More" opens AppMoreSheet (workspace switcher, the remaining pages, account, theme).
  */
-import { RouterLink } from "vue-router";
+import { computed } from "vue";
+import { RouterLink, useRoute } from "vue-router";
 import { Ellipsis } from "lucide-vue-next";
-import { NAV_ITEMS } from "./navItems";
 import { useShell } from "./useShell";
+import { useWorkspace } from "./useWorkspace";
 import AppMoreSheet from "./AppMoreSheet.vue";
 
+const route = useRoute();
 const { moreSheetOpen } = useShell();
+const { primaryItems, overflowItems } = useWorkspace();
+
+/** "More" is the current tab when the page lives in the sheet (e.g. org Activity / Settings). */
+const moreIsCurrent = computed(() => overflowItems.value.some((item) => item.name === route.name));
+const columns = computed(() => `repeat(${primaryItems.value.length + 1}, 1fr)`);
 </script>
 
 <template>
   <nav class="tabbar" aria-label="Primary">
-    <ul role="list" class="tabbar__list">
-      <li v-for="item in NAV_ITEMS" :key="item.name" class="tabbar__cell">
+    <ul role="list" class="tabbar__list" :style="{ gridTemplateColumns: columns }">
+      <li v-for="item in primaryItems" :key="item.name" class="tabbar__cell">
         <RouterLink :to="item.to" class="tab">
           <component :is="item.icon" :size="20" />
           <span class="tab__label">{{ item.label }}</span>
@@ -25,6 +33,7 @@ const { moreSheetOpen } = useShell();
         <button
           type="button"
           class="tab"
+          :class="{ 'is-current': moreIsCurrent }"
           aria-haspopup="dialog"
           :aria-expanded="moreSheetOpen"
           @click="moreSheetOpen = true"
@@ -79,7 +88,8 @@ const { moreSheetOpen } = useShell();
   font-weight: var(--fw-medium);
   white-space: nowrap;
 }
-.tab[aria-current="page"] {
+.tab[aria-current="page"],
+.tab.is-current {
   color: var(--accent-text);
 }
 .tab:focus-visible {
