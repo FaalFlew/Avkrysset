@@ -40,6 +40,23 @@ public sealed class RecordingNotificationService : IOrganizationNotificationServ
     public Task MemberSettingsUpdated(Guid organizationId, OrganizationMembershipDto membership) => Record(organizationId, nameof(MemberSettingsUpdated));
 }
 
+/// <summary>Stands in for the Postmark email service: nothing is sent, every message is recorded.</summary>
+public sealed class RecordingEmailService : IEmailService
+{
+    private readonly ConcurrentQueue<SentEmail> _sent = new();
+
+    public SentEmail[] SentTo(string email) =>
+        _sent.Where(e => string.Equals(e.To, email, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+    public Task<bool> SendEmailAsync(string toEmail, string subject, string htmlContent)
+    {
+        _sent.Enqueue(new SentEmail(toEmail, subject, htmlContent));
+        return Task.FromResult(true);
+    }
+}
+
+public sealed record SentEmail(string To, string Subject, string HtmlBody);
+
 /// <summary>
 /// Counts the SQL commands the API sends while a counting window is open (tests in the collection
 /// run one at a time, so only the request under test is counted).

@@ -1,11 +1,13 @@
+using System.Net;
+using System.Security.Cryptography;
 using FluentValidation;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
-using System.Security.Cryptography;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Exceptions;
+using TimePlanner.API.Features.Queries.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -20,7 +22,7 @@ public class InviteUserCommandValidator : AbstractValidator<InviteUserCommand>
     {
         RuleFor(x => x.OrganizationId).NotEmpty();
         RuleFor(x => x.Email).Cascade(CascadeMode.Stop)
-            .NotEmpty().WithMessage("Email is required.")
+            .NotEmpty().WithMessage("Email is required.") // also rejects whitespace only
             .EmailAddress().WithMessage("A valid email address is required.");
         RuleFor(x => x.Role).Cascade(CascadeMode.Stop)
             .NotEmpty().WithMessage("Role is required.")
@@ -29,8 +31,15 @@ public class InviteUserCommandValidator : AbstractValidator<InviteUserCommand>
     }
 }
 
+/// <summary>
+/// Invites an email address (Owner/Admin). 409 when that address is already an active member or already has an
+/// unexpired pending invitation; an expired pending one is marked Expired first, so it no longer blocks a new invite.
+/// The email links to {FrontendBaseUrl}/invitations/{token}.
+/// </summary>
 public class InviteUserCommandHandler : IRequestHandler<InviteUserCommand, OrganizationInvitationDto>
 {
+    public const int ValidForDays = 7;
+
     private readonly ApplicationDbContext _context;
     private readonly ICurrentUserService _currentUserService;
     private readonly IEmailService _emailService;
@@ -52,19 +61,38 @@ public class InviteUserCommandHandler : IRequestHandler<InviteUserCommand, Organ
         // Authorization: Must be Admin or Owner.
         await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to invite users to this organization.", cancellationToken);
 
+        var email = request.Email.Trim();
+
         // Validation: Check if user is already an active member.
         var isAlreadyMember = await _context.OrganizationMemberships
             .AnyAsync(m => m.OrganizationId == request.OrganizationId &&
-                           m.User.Email == request.Email &&
+                           m.User.Email == email &&
                            m.Status == MembershipStatus.Active, cancellationToken);
         if (isAlreadyMember)
         {
-            throw new ConflictException($"The user with email '{request.Email}' is already an active member of this organization.");
+            throw new ConflictException($"The user with email '{email}' is already an active member of this organization.");
         }
 
-        // Generate a secure, URL-safe token
-        var tokenBytes = RandomNumberGenerator.GetBytes(32);
-        var token = WebEncoders.Base64UrlEncode(tokenBytes);
+        // At most one Pending invitation per organization and email (filtered unique index). An expired one is marked
+        // Expired so it stops blocking; an unexpired one means this address is already invited.
+        var now = DateTime.UtcNow;
+        var pending = await _context.OrganizationInvitations
+            .FirstOrDefaultAsync(i => i.OrganizationId == request.OrganizationId &&
+                                      i.InvitedUserEmail == email &&
+                                      i.Status == InvitationStatus.Pending, cancellationToken);
+        if (pending != null)
+        {
+            if (pending.ExpiryUtc > now)
+            {
+                throw AlreadyInvited(email);
+            }
+
+            pending.Status = InvitationStatus.Expired;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        // A secure, URL-safe token: 32 random bytes = 43 base64url characters (never shaped like a GUID).
+        var token = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
 
         var organization = await _context.Organizations.AsNoTracking().SingleAsync(o => o.Id == request.OrganizationId, cancellationToken);
 
@@ -72,35 +100,43 @@ public class InviteUserCommandHandler : IRequestHandler<InviteUserCommand, Organ
         {
             OrganizationId = request.OrganizationId,
             InviterId = currentUserId.Value,
-            InvitedUserEmail = request.Email,
+            InvitedUserEmail = email,
             Role = request.Role,
             Token = token,
-            ExpiryUtc = DateTime.UtcNow.AddDays(7)
+            ExpiryUtc = now.AddDays(ValidForDays)
         };
 
         _context.OrganizationInvitations.Add(invitation);
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
+        {
+            // Another admin invited the same address at the same moment.
+            throw AlreadyInvited(email);
+        }
 
-        // Send invitation email
+        // Send invitation email. Everything user-supplied is HTML-encoded (an organization name is free text).
         var frontendUrl = _configuration["FrontendBaseUrl"];
-        var acceptLink = $"{frontendUrl}/accept-invite?token={token}";
-        var emailBody = $"<h1>Invitation to Join {organization.Name}</h1>" +
-                        $"<p>You have been invited to join the '{organization.Name}' organization on Time Planner as a(n) {request.Role}.</p>" +
-                        $"<p>Click the link below to accept the invitation. This link will expire in 7 days.</p>" +
-                        $"<p><a href='{acceptLink}'>Accept Invitation</a></p>" +
+        var acceptLink = $"{frontendUrl}/invitations/{token}";
+        var orgName = WebUtility.HtmlEncode(organization.Name);
+        var role = WebUtility.HtmlEncode(request.Role);
+        var emailBody = $"<h1>Invitation to Join {orgName}</h1>" +
+                        $"<p>You have been invited to join the '{orgName}' organization on Time Planner as a(n) {role}.</p>" +
+                        $"<p>Click the link below to accept or decline the invitation. This link will expire in {ValidForDays} days.</p>" +
+                        $"<p><a href=\"{WebUtility.HtmlEncode(acceptLink)}\">View invitation</a></p>" +
                         $"<p>If you were not expecting this, you can safely ignore this email.</p>";
 
-        await _emailService.SendEmailAsync(request.Email, $"You're invited to join {organization.Name} on Time Planner", emailBody);
+        await _emailService.SendEmailAsync(email, $"You're invited to join {organization.Name} on Time Planner", emailBody);
 
-        return new OrganizationInvitationDto
-        {
-            Id = invitation.Id,
-            OrganizationId = invitation.OrganizationId,
-            OrganizationName = organization.Name,
-            InvitedUserEmail = invitation.InvitedUserEmail,
-            Role = invitation.Role,
-            Status = invitation.Status,
-            ExpiryUtc = invitation.ExpiryUtc
-        };
+        return await _context.OrganizationInvitations
+            .AsNoTracking()
+            .Where(i => i.Id == invitation.Id)
+            .Select(InvitationProjections.ToDto(now))
+            .SingleAsync(cancellationToken);
     }
+
+    private static ConflictException AlreadyInvited(string email) =>
+        new($"'{email}' already has a pending invitation to this organization.");
 }

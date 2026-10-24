@@ -53,6 +53,9 @@ public sealed class ApiFixture : IAsyncLifetime
     /// <summary>Records the real-time notifications the API sends (replaces the SignalR notifier).</summary>
     public RecordingNotificationService Notifications { get; } = new();
 
+    /// <summary>Records the emails the API would send (nothing is sent).</summary>
+    public RecordingEmailService Emails { get; } = new();
+
     /// <summary>Lets a test make a chosen SaveChanges call fail inside the API.</summary>
     public FaultInjectionInterceptor Faults { get; } = new();
 
@@ -72,7 +75,7 @@ public sealed class ApiFixture : IAsyncLifetime
         SetEnvironment("JwtSettings__Issuer", "https://timeplanner.tests/");
         SetEnvironment("JwtSettings__Audience", "https://timeplanner.tests/");
 
-        Factory = new TestApiFactory(Notifications, Faults, SqlCommands, Clock);
+        Factory = new TestApiFactory(Notifications, Emails, Faults, SqlCommands, Clock);
 
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -169,6 +172,7 @@ public sealed class ApiFixture : IAsyncLifetime
 
     private sealed class TestApiFactory(
         RecordingNotificationService notifications,
+        RecordingEmailService emails,
         FaultInjectionInterceptor faults,
         SqlCommandCounter sqlCommands,
         TestClock clock) : WebApplicationFactory<Program>
@@ -178,7 +182,7 @@ public sealed class ApiFixture : IAsyncLifetime
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IEmailService>();
-                services.AddScoped<IEmailService, NoOpEmailService>();
+                services.AddSingleton<IEmailService>(emails);
 
                 services.RemoveAll<IOrganizationNotificationService>();
                 services.AddSingleton<IOrganizationNotificationService>(notifications);
@@ -192,11 +196,6 @@ public sealed class ApiFixture : IAsyncLifetime
                 services.AddSingleton<TimeProvider>(clock);
             });
         }
-    }
-
-    private sealed class NoOpEmailService : IEmailService
-    {
-        public Task<bool> SendEmailAsync(string toEmail, string subject, string htmlContent) => Task.FromResult(true);
     }
 }
 

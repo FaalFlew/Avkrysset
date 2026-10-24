@@ -588,8 +588,35 @@ public class OrganizationsController : ControllerBase
         await _mediator.Send(command);
         return NoContent();
     }
+    // Pending, unexpired invitations, newest first (Owner/Admin).
+    [HttpGet("{organizationId:guid}/invitations")]
+    [ProducesResponseType(typeof(List<OrganizationInvitationDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetOrganizationInvitations(Guid organizationId)
+    {
+        var result = await _mediator.Send(new GetOrganizationInvitationsQuery(organizationId));
+        return Ok(result);
+    }
+
+    // Withdraws a pending invitation (status Rescinded).
+    [HttpDelete("{organizationId:guid}/invitations/{inviteId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> RescindInvitation(Guid organizationId, Guid inviteId)
+    {
+        await _mediator.Send(new RescindInvitationCommand(organizationId, inviteId));
+        return NoContent();
+    }
+
+    // 409 when the email is already an active member or already has an unexpired pending invitation.
     [HttpPost("{organizationId:guid}/invitations")]
     [ProducesResponseType(typeof(OrganizationInvitationDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]

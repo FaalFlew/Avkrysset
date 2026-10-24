@@ -43,6 +43,8 @@ public sealed class OrganizationPermissionTests
             (o, _) => new { organizationId = o.OrgId, taskId = TaskId, newAssigneeIds = new[] { o.Member.Id } }),
         ["invite"] = new(Level.AdminOrOwner, HttpMethod.Post, (o, _) => $"/api/organizations/{o.OrgId}/invitations",
             (o, _) => new { organizationId = o.OrgId, email = "someone@tests.local", role = "Member" }),
+        ["invitations"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/invitations", (_, _) => null),
+        ["rescind invitation"] = new(Level.AdminOrOwner, HttpMethod.Delete, (o, _) => $"/api/organizations/{o.OrgId}/invitations/{IssueId}", (_, _) => null),
         ["remove member"] = new(Level.AdminOrOwner, HttpMethod.Delete, (o, _) => $"/api/organizations/{o.OrgId}/members/{o.Admin.Id}", (_, _) => null),
         ["change role"] = new(Level.AdminOrOwner, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}/members/{o.Admin.Id}/role",
             (o, _) => new { organizationId = o.OrgId, userId = o.Admin.Id, newRole = "Member" }),
