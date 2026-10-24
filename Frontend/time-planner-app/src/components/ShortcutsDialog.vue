@@ -41,6 +41,7 @@ const GROUPS: { title: string; items: Shortcut[]; note?: string }[] = [
       { keys: [["J"], ["ArrowRight"]], label: "Next week (next day on phones)" },
       { keys: [["K"], ["ArrowLeft"]], label: "Previous week (previous day on phones)" },
       { keys: [["D"]], label: "Open the week picker (week numbers, year grid)" },
+      { keys: [["Mod", "C"]], label: "Copy the task under the pointer (or the selected task)" },
       { keys: [["Mod", "V"]], label: "Paste the copied task (at the pointer, after the selected task, or on the selected day)" },
     ],
     note: "Dragging a task: hold it at the left or right edge of the grid to move it to the previous or next week. Esc cancels. On phones, swipe left or right to change day. Right-click a task to copy or duplicate it, or free time to paste.",

@@ -42,7 +42,7 @@ fills the gap up to 1 hour unrounded (unchanged).
 Ctrl/⌘ C on a focused task → Ctrl/⌘ V on a chosen slot (keeps title, duration, category, template); phones: long-press menu
 "Copy" → tap a slot → "Paste here"; "Duplicate to next day/week". Normal overlap rules; copying a read-only org task creates a
 personal copy. Do together with item 2 ("planner quick wins") or as the first part of Phase 3 (so it works in the org schedule too).
-**Done:** Ctrl/⌘+C / Ctrl/⌘+V (pointer slot → after the focused task → selected day), right-click menu (Copy, Duplicate to
+**Done:** Ctrl/⌘+C (task under the mouse → focused task) / Ctrl/⌘+V (pointer slot → after the focused task → selected day), right-click menu (Copy, Duplicate to
 next day/week, Paste here), editor "More actions" (Copy → "Tap a time to paste" banner, Duplicate) for phones. Copies are
 always personal tasks (org tasks I created too — no org-create step in the planner yet; revisit in Phase 3's org schedule).
 Undo toast deletes the copy; the copy is session-bound (`stores/clipboardStore.ts`). Phones use the editor menu instead of a

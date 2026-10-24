@@ -633,12 +633,23 @@ function slotUnderPointer(): { day: DateKey; minutes: number } | null {
   return day ? { day, minutes: minutesAt(index, point.y, SNAP_MINUTES) } : null;
 }
 
-/** The task block that has keyboard focus (as displayed, incl. an uncommitted keyboard move). */
-function focusedTask(): Task | null {
-  const block = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>("button.task-block--task[data-task-id]");
+/** The task shown by a block element in this grid (as displayed, incl. an uncommitted keyboard move). */
+function taskOfBlock(element: Element | null | undefined): Task | null {
+  const block = element?.closest?.<HTMLElement>("button.task-block--task[data-task-id]");
   if (!block || !scroller.value?.contains(block)) return null;
   const id = block.dataset.taskId!;
   return keyboard.overrides.value[id] ?? taskStore.getTaskById(id) ?? null;
+}
+
+/** The task block that has keyboard focus. */
+function focusedTask(): Task | null {
+  return taskOfBlock(document.activeElement);
+}
+
+/** The task block under the mouse pointer (so hovering a task + Ctrl/⌘+C copies it). */
+function hoveredTask(): Task | null {
+  const point = pointerAt;
+  return point ? taskOfBlock(document.elementFromPoint(point.x, point.y)) : null;
 }
 
 /** Paste the copy at `start`; `focusResult` moves keyboard focus to the new task (chain pastes). */
@@ -657,7 +668,7 @@ async function duplicate(task: Task, days: number): Promise<void> {
 
 useHotkeyScope({
   "Mod+c": () => {
-    const task = focusedTask();
+    const task = hoveredTask() ?? focusedTask();
     if (!task) return false; // nothing of ours selected: the browser's copy
     keyboard.flush(task.id);
     clipboard.copy(task);
