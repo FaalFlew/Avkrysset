@@ -25,8 +25,8 @@ public class GetJoinCodesQueryHandler : IRequestHandler<GetJoinCodesQuery, JoinC
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        // Authorization: CRITICAL - Only the owner can view the join codes.
-        await _context.RequireOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to view the join codes for this organization.", cancellationToken);
+        // Authorization: Owners and Admins can view (and copy) the join codes (decision Q8); only the owner regenerates them.
+        await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to view the join codes for this organization.", cancellationToken);
 
         var codes = await _context.Organizations
             .AsNoTracking()

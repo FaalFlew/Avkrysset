@@ -49,7 +49,7 @@ public sealed class OrganizationPermissionTests
         ["update organization"] = new(Level.AdminOrOwner, HttpMethod.Put, (o, _) => $"/api/organizations/{o.OrgId}",
             (o, _) => new { organizationId = o.OrgId, name = o.OrgName }),
         ["org analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics?{Range}", (_, _) => null),
-        ["member list"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/members", (_, _) => null),
+        ["join codes"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/join-codes", (_, _) => null),
         ["selectable members"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/members/selectable", (_, _) => null),
         ["another member's analytics"] = new(Level.AdminOrOwner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/analytics/members/{o.Owner.Id}?{Range}", (_, _) => null),
 
@@ -59,10 +59,11 @@ public sealed class OrganizationPermissionTests
             (o, _) => new { organizationId = o.OrgId, expiryDays = 7 }),
         ["transfer ownership"] = new(Level.Owner, HttpMethod.Post, (o, _) => $"/api/organizations/{o.OrgId}/transfer-ownership",
             (o, _) => new { organizationId = o.OrgId, newOwnerUserId = o.Admin.Id }),
-        ["join codes"] = new(Level.Owner, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/join-codes", (_, _) => null),
 
         // Any active member
         ["organization"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}", (_, _) => null),
+        ["member directory"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/members", (_, _) => null),
+        ["my membership"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/members/me", (_, _) => null),
         ["issue board"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/issue-board", (_, _) => null),
         ["issue panels"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/issue-panels", (_, _) => null),
         ["panel issues"] = new(Level.Member, HttpMethod.Get, (o, _) => $"/api/organizations/{o.OrgId}/issue-panels/{PanelId}/issues", (_, _) => null),

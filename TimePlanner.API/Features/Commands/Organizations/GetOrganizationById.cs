@@ -2,7 +2,6 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
-using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
 
@@ -27,36 +26,14 @@ public class GetOrganizationByIdQueryHandler : IRequestHandler<GetOrganizationBy
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
         // Authorization: User must be an active member to view the organization.
-        await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
+        var membership = await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
 
         var organization = await _context.Organizations
             .AsNoTracking()
-            .Where(o => o.Id == request.OrganizationId)
-            .Select(o => new OrganizationDto
-            {
-                Id = o.Id,
-                Name = o.Name,
-                OwnerId = o.OwnerId,
-                TimeZoneId = o.TimeZoneId,
-                MemberJoinCode = o.MemberJoinCode,
-                MemberJoinCodeExpiryUtc = o.MemberJoinCodeExpiryUtc,
-                AdminJoinCode = o.AdminJoinCode,
-                AdminJoinCodeExpiryUtc = o.AdminJoinCodeExpiryUtc
-            })
-            .SingleOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(o => o.Id == request.OrganizationId, cancellationToken)
+            ?? throw new KeyNotFoundException(AuthorizationExtensions.OrganizationNotFoundMessage);
 
-        if (organization == null)
-        {
-            throw new KeyNotFoundException("Organization not found.");
-        }
-
-        // Security Refinement: Hide join codes if the user is not the owner.
-        if (organization.OwnerId != currentUserId)
-        {
-            organization.MemberJoinCode = "hidden";
-            organization.AdminJoinCode = "hidden";
-        }
-
-        return organization;
+        // Join codes only for Owners and Admins (decision Q8).
+        return OrganizationDtoMapper.For(organization, membership.Role);
     }
 }

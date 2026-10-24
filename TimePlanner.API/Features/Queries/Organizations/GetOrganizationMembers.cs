@@ -4,10 +4,14 @@ using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
-using TimePlanner.API.Utilities; // We will create this for our authorization helper
+using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
+/// <summary>
+/// The member directory, by display name. Owners and Admins see every membership (Active, Left, Removed);
+/// members see the active members only.
+/// </summary>
 public record GetOrganizationMembersQuery(Guid OrganizationId) : IRequest<List<OrganizationMembershipDto>>;
 
 public class GetOrganizationMembersQueryHandler : IRequestHandler<GetOrganizationMembersQuery, List<OrganizationMembershipDto>>
@@ -29,29 +33,17 @@ public class GetOrganizationMembersQueryHandler : IRequestHandler<GetOrganizatio
             throw new UnauthorizedAccessException();
         }
 
-        // Authorization Check: Ensure the current user is an Admin or Owner of this organization.
-        await _context.RequireAdminOrOwner(userId.Value, request.OrganizationId,
-            "You do not have permission to view members of this organization.", cancellationToken);
+        // Any active member can read the directory; former members are listed for Owners and Admins only.
+        var membership = await _context.RequireActiveMember(userId.Value, request.OrganizationId, cancellationToken);
+        var includeFormer = AuthorizationExtensions.IsAdminOrOwnerRole(membership.Role);
 
-        // Query for the members, including their User details to get the email.
-        var members = await _context.OrganizationMemberships
+        return await _context.OrganizationMemberships
             .AsNoTracking()
             .Where(m => m.OrganizationId == request.OrganizationId)
+            .Where(m => includeFormer || m.Status == MembershipStatus.Active)
             .OrderBy(m => m.User.DisplayName ?? m.User.Email)
-            .Select(m => new OrganizationMembershipDto
-            {
-                MembershipId = m.Id,
-                OrganizationId = m.OrganizationId,
-                OrganizationName = m.Organization.Name,
-                UserId = m.UserId,
-                UserEmail = m.User.Email!,
-                DisplayName = m.User.DisplayName ?? m.User.Email!,
-                Role = m.Role,
-                Status = m.Status,
-                StatusMessage = m.StatusMessage
-            })
+            .ThenBy(m => m.UserId)
+            .Select(MembershipProjections.ToDto)
             .ToListAsync(cancellationToken);
-
-        return members;
     }
 }

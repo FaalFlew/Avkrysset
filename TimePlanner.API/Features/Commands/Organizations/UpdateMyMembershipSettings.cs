@@ -4,7 +4,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using TimePlanner.API.Data;
-using TimePlanner.API.DTOs.Organizations;
+using TimePlanner.API.Features.Queries.Organizations;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
 
@@ -53,21 +53,7 @@ public class UpdateMyMembershipSettingsCommandHandler : IRequestHandler<UpdateMy
         membership.StatusMessage = request.StatusMessage;
         await _context.SaveChangesAsync(cancellationToken);
 
-        var membershipDto = await _context.OrganizationMemberships.AsNoTracking()
-        .Where(m => m.Id == membership.Id)
-        .Select(m => new OrganizationMembershipDto
-        {
-            MembershipId = m.Id,
-            OrganizationId = m.OrganizationId,
-            OrganizationName = m.Organization.Name,
-            UserId = m.UserId,
-            UserEmail = m.User.Email!,
-            DisplayName = m.User.DisplayName ?? m.User.Email!,
-            Role = m.Role,
-            Status = m.Status,
-            StatusMessage = m.StatusMessage // Include the newly updated message
-        })
-        .SingleAsync(cancellationToken);
+        var membershipDto = await MembershipProjections.LoadAsync(_context, membership.Id, cancellationToken);
 
         await _notificationService.MemberSettingsUpdated(request.OrganizationId, membershipDto);
     }

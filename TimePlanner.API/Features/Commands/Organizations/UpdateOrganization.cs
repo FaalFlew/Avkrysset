@@ -2,7 +2,7 @@ using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
-using TimePlanner.API.DTOs.Organizations;
+using TimePlanner.API.Features.Queries.Organizations;
 using TimePlanner.API.Exceptions;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
@@ -71,13 +71,7 @@ public class UpdateOrganizationCommandHandler : IRequestHandler<UpdateOrganizati
         // The UpdatedOnUtc/UpdatedByUserId will be set by the DbContext's SaveChangesAsync override.
 
         await _context.SaveChangesAsync(cancellationToken);
-        var orgDto = new OrganizationDto
-        {
-            Id = organization.Id,
-            Name = organization.Name,
-            OwnerId = organization.OwnerId,
-            TimeZoneId = organization.TimeZoneId
-        };
-        await _notificationService.OrganizationUpdated(request.OrganizationId, orgDto);
+        // Sent to every member: no role, no join codes.
+        await _notificationService.OrganizationUpdated(request.OrganizationId, OrganizationDtoMapper.For(organization, null));
     }
 }

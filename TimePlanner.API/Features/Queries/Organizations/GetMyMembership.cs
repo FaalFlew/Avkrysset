@@ -8,6 +8,7 @@ using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
+/// <summary>The caller's membership; 404 "Organization not found." unless it is active.</summary>
 public record GetMyMembershipQuery(Guid OrganizationId) : IRequest<OrganizationMembershipDto>;
 
 public class GetMyMembershipQueryHandler : IRequestHandler<GetMyMembershipQuery, OrganizationMembershipDto>
@@ -26,31 +27,14 @@ public class GetMyMembershipQueryHandler : IRequestHandler<GetMyMembershipQuery,
         var currentUserId = _currentUserService.UserId;
         if (currentUserId == null) throw new UnauthorizedAccessException();
 
-        var membership = await _context.OrganizationMemberships
-            .AsNoTracking()
-            .Include(m => m.User)
-            .Include(m => m.Organization)
-            .Where(m => m.OrganizationId == request.OrganizationId && m.UserId == currentUserId)
-            .Select(m => new OrganizationMembershipDto
-            {
-                MembershipId = m.Id,
-                OrganizationId = m.OrganizationId,
-                OrganizationName = m.Organization.Name,
-                UserId = m.UserId,
-                UserEmail = m.User.Email!,
-                DisplayName = m.User.DisplayName ?? m.User.Email!,
-                Role = m.Role,
-                Status = m.Status,
-                StatusMessage = m.StatusMessage
-            })
-            .SingleOrDefaultAsync(cancellationToken);
-
-        if (membership == null)
-        {
-            // This is not an access violation, but a "Not Found" case. The user might have been removed.
-            throw new KeyNotFoundException(AuthorizationExtensions.OrganizationNotFoundMessage);
-        }
-
-        return membership;
+        // Members who left or were removed get the same 404 as people who never joined.
+        return await _context.OrganizationMemberships
+                   .AsNoTracking()
+                   .Where(m => m.OrganizationId == request.OrganizationId
+                               && m.UserId == currentUserId
+                               && m.Status == MembershipStatus.Active)
+                   .Select(MembershipProjections.ToDto)
+                   .SingleOrDefaultAsync(cancellationToken)
+               ?? throw new KeyNotFoundException(AuthorizationExtensions.OrganizationNotFoundMessage);
     }
 }

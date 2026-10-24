@@ -3,6 +3,8 @@ using MediatR;
 using System.Security.Cryptography;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
+using TimePlanner.API.Features.Queries.Organizations;
+using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
 
@@ -48,17 +50,7 @@ public class RegenerateJoinCodesCommandHandler : IRequestHandler<RegenerateJoinC
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        return new OrganizationDto
-        {
-            Id = organization.Id,
-            Name = organization.Name,
-            OwnerId = organization.OwnerId,
-            TimeZoneId = organization.TimeZoneId,
-            MemberJoinCode = organization.MemberJoinCode,
-            MemberJoinCodeExpiryUtc = organization.MemberJoinCodeExpiryUtc,
-            AdminJoinCode = organization.AdminJoinCode,
-            AdminJoinCodeExpiryUtc = organization.AdminJoinCodeExpiryUtc
-        };
+        return OrganizationDtoMapper.For(organization, OrganizationRoles.Owner);
     }
 
     private static string GenerateJoinCode()

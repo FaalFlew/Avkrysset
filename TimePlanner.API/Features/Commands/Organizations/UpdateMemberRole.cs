@@ -46,8 +46,11 @@ public class UpdateMemberRoleCommandHandler : IRequestHandler<UpdateMemberRoleCo
         // Authorization: Must be an Admin or Owner to change roles.
         var actor = await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to change member roles.", cancellationToken);
 
+        // Only active memberships have a role that matters; people who left or were removed are "not found".
         var membershipToUpdate = await _context.OrganizationMemberships
-            .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId && m.UserId == request.UserId, cancellationToken);
+            .FirstOrDefaultAsync(m => m.OrganizationId == request.OrganizationId
+                                      && m.UserId == request.UserId
+                                      && m.Status == MembershipStatus.Active, cancellationToken);
 
         if (membershipToUpdate == null)
         {
