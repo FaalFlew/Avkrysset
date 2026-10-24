@@ -394,7 +394,8 @@ const moreItems = computed<MenuItem[]>(() => [
     id: "copy",
     label: "Copy",
     icon: Copy,
-    description: isReadOnly.value ? "As a personal task" : undefined,
+    // Org tasks (assigned to me or created by me) are copied as personal tasks.
+    description: task.value && isOrgTask(task.value) ? "As a personal task" : undefined,
     onSelect: copyTask,
   },
   { id: "duplicate-day", label: "Duplicate to next day", icon: CalendarPlus, onSelect: () => duplicateTask(1) },

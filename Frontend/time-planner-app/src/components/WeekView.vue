@@ -693,8 +693,8 @@ function taskMenuItems(task: Task): MenuItem[] {
       label: "Copy",
       icon: Copy,
       shortcut: ["Mod", "C"],
-      // An org task assigned to me is copied as my own (personal) task.
-      description: canEditTask(task) ? undefined : "As a personal task",
+      // Org tasks are copied as my own (personal) tasks.
+      description: isOrgTask(task) ? "As a personal task" : undefined,
       onSelect: () => clipboard.copy(task),
     },
     { id: "duplicate-day", label: "Duplicate to next day", icon: CalendarPlus, onSelect: () => void duplicate(task, 1) },
@@ -1541,6 +1541,7 @@ const gridStyle = computed(() => ({
 }
 .hover-slot__label {
   display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
