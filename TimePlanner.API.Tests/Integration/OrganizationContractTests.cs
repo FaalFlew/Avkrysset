@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using TimePlanner.API.Data;
+using TimePlanner.API.Models;
 
 namespace TimePlanner.API.Tests.Integration;
 
@@ -153,6 +157,57 @@ public sealed partial class OrganizationContractTests
         Assert.Equal("Active", rejoined.GetProperty("status").GetString());
         Assert.Equal(org.Member.Email, rejoined.GetProperty("userEmail").GetString());
         Assert.Equal(new[] { "MemberJoined" }, _fixture.Notifications.EventsFor(org.OrgId).Skip(before));
+    }
+
+    [Fact]
+    public async Task An_organization_with_a_board_tasks_invitations_and_exports_can_be_deleted()
+    {
+        var org = await OrgTestKit.CreateAsync(_fixture);
+        var panelId = (await OrgTestKit.ReadJsonAsync(await org.Owner.Client.PostAsJsonAsync($"/api/organizations/{org.OrgId}/issue-panels",
+            new { organizationId = org.OrgId, name = "Backlog" }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        Guid IssueId(JsonElement issue) => issue.GetProperty("id").GetGuid();
+        var issues = new List<Guid>();
+        foreach (var title in new[] { "Open", "Promoted" })
+        {
+            issues.Add(IssueId(await OrgTestKit.ReadJsonAsync(await org.Admin.Client.PostAsJsonAsync(
+                $"/api/organizations/{org.OrgId}/issue-panels/{panelId}/issues",
+                new { organizationId = org.OrgId, panelId, title, notes = (string?)null, categoryId = org.Admin.CategoryId }), HttpStatusCode.Created)));
+        }
+
+        await OrgTestKit.ReadJsonAsync(await org.Owner.Client.PostAsJsonAsync($"/api/organizations/{org.OrgId}/issues/{issues[1]}/promote-to-task",
+            new { organizationId = org.OrgId, issueId = issues[1], start = "2026-11-05T09:00:00.000Z", duration = 1, assigneeIds = new[] { org.Member.Id } }),
+            HttpStatusCode.Created);
+        await OrgTestKit.CreateOrgTaskAsync(org.Admin, org.OrgId, "Plan", "2026-11-05T11:00:00.000Z", 1, org.Member, org.Admin);
+        await OrgTestKit.ReadJsonAsync(await org.Owner.Client.PostAsJsonAsync($"/api/organizations/{org.OrgId}/invitations",
+            new { organizationId = org.OrgId, email = $"x-{Guid.NewGuid():N}@tests.local", role = "Member" }), HttpStatusCode.Created);
+        using (var scope = _fixture.CreateScope())
+        {
+            // Organization report exports are written by Phase 4; insert one the way it will look.
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.ReportExports.Add(new ReportExport
+            {
+                DocumentId = $"TP-20261105-{Guid.NewGuid():N}"[..20], Kind = "Organization", Format = "pdf", RequestedByUserId = org.Owner.Id,
+                OrganizationId = org.OrgId, RangeStartUtc = DateTime.UtcNow.AddDays(-7), RangeEndUtc = DateTime.UtcNow, ViewType = "weekly",
+                TimeZoneId = "UTC", Culture = "invariant", ContentSha256 = new byte[32], CreatedOnUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await org.Owner.Client.DeleteAsync($"/api/organizations/{org.OrgId}")).StatusCode);
+
+        using (var scope = _fixture.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            Assert.False(await db.Organizations.IgnoreQueryFilters().AnyAsync(o => o.Id == org.OrgId));
+            Assert.Equal(0, await db.IssuePanels.IgnoreQueryFilters().CountAsync(p => p.OrganizationId == org.OrgId));
+            Assert.Equal(0, await db.Issues.IgnoreQueryFilters().CountAsync(i => i.OrganizationId == org.OrgId));
+            Assert.Equal(0, await db.Tasks.IgnoreQueryFilters().CountAsync(t => t.OrganizationId == org.OrgId));
+            Assert.Equal(0, await db.OrganizationInvitations.IgnoreQueryFilters().CountAsync(i => i.OrganizationId == org.OrgId));
+            Assert.Equal(0, await db.OrganizationMemberships.IgnoreQueryFilters().CountAsync(m => m.OrganizationId == org.OrgId));
+            Assert.Equal(0, await db.ReportExports.CountAsync(e => e.OrganizationId == org.OrgId));
+        }
+
+        Assert.Equal(HttpStatusCode.NotFound, (await org.Member.Client.GetAsync($"/api/organizations/{org.OrgId}")).StatusCode);
     }
 
     private static async Task<JsonElement> GetOrgAsync(TestUser user, Guid orgId) =>

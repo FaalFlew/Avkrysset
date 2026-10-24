@@ -1,5 +1,6 @@
 using FluentValidation;
 using MediatR;
+using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
 using TimePlanner.API.Exceptions;
@@ -44,6 +45,14 @@ public class CreateIssuePanelCommandHandler : IRequestHandler<CreateIssuePanelCo
         // Authorization: Current user must be Admin or Owner.
         await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to create issue panels in this organization.", cancellationToken);
 
+        // Panel names are unique within an organization (unique index; was a 500).
+        var nameExists = await _context.IssuePanels
+            .AnyAsync(p => p.OrganizationId == request.OrganizationId && p.Name == request.Name, cancellationToken);
+        if (nameExists)
+        {
+            throw DuplicateName(request.Name);
+        }
+
         var panel = new IssuePanel
         {
             Name = request.Name,
@@ -51,7 +60,14 @@ public class CreateIssuePanelCommandHandler : IRequestHandler<CreateIssuePanelCo
         };
 
         _context.IssuePanels.Add(panel);
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
+        {
+            throw DuplicateName(request.Name); // created by someone else at the same moment
+        }
         var panelDto = new IssuePanelDto
         {
             Id = panel.Id,
@@ -62,4 +78,7 @@ public class CreateIssuePanelCommandHandler : IRequestHandler<CreateIssuePanelCo
         return panelDto;
 
     }
+
+    public static ConflictException DuplicateName(string name) =>
+        new($"An issue panel with the name '{name}' already exists in this organization.");
 }

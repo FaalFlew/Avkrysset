@@ -2,13 +2,17 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
 using TimePlanner.API.DTOs.Organizations;
-using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
 using TimePlanner.API.Utilities;
 
 namespace TimePlanner.API.Features.Queries.Organizations;
 
-public record GetIssueBoardQuery(Guid OrganizationId) : IRequest<IssueBoardDto>;
+/// <summary>
+/// The organization's board for any active member: panels by creation time then name (ordinal), each with its issues
+/// oldest first. Issues promoted to a task are left out unless <paramref name="IncludeScheduled"/> (they then carry
+/// convertedToTaskId).
+/// </summary>
+public record GetIssueBoardQuery(Guid OrganizationId, bool IncludeScheduled = false) : IRequest<IssueBoardDto>;
 
 public class GetIssueBoardQueryHandler : IRequestHandler<GetIssueBoardQuery, IssueBoardDto>
 {
@@ -29,43 +33,40 @@ public class GetIssueBoardQueryHandler : IRequestHandler<GetIssueBoardQuery, Iss
         // Authorization: Any active member can view the issue board.
         await _context.RequireActiveMember(currentUserId.Value, request.OrganizationId, cancellationToken);
 
-        // Fetch the organization name
         var organizationName = await _context.Organizations
             .Where(o => o.Id == request.OrganizationId)
             .Select(o => o.Name)
             .SingleAsync(cancellationToken);
 
-        // This is the core query. We fetch all panels for the organization.
-        // For each panel, we include its issues, but only those that have not been converted.
         var panels = await _context.IssuePanels
             .AsNoTracking()
             .Where(p => p.OrganizationId == request.OrganizationId)
-            .Select(p => new IssuePanelWithIssuesDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                Issues = p.Issues
-                    .Where(i => i.ConvertedToTaskItemId == null) // Filter out converted issues
-                    .OrderBy(i => i.CreatedOnUtc) // Example ordering
-                    .Select(i => new IssueDto
-                    {
-                        Id = i.Id,
-                        Title = i.Title,
-                        Notes = i.Notes,
-                        CategoryId = i.CategoryId,
-                        CategoryName = i.Category.Name,
-                        OrganizationId = i.OrganizationId,
-                        IssuePanelId = i.IssuePanelId
-                    }).ToList()
-            })
-            // You could add an OrderBy for the panels themselves here if needed
+            .Select(p => new { p.Id, p.Name, p.CreatedOnUtc })
             .ToListAsync(cancellationToken);
+
+        var issuesByPanel = (await _context.Issues
+                .AsNoTracking()
+                .Where(i => i.OrganizationId == request.OrganizationId)
+                .Where(i => request.IncludeScheduled || i.ConvertedToTaskItemId == null)
+                .Select(IssueProjections.ToDto)
+                .ToListAsync(cancellationToken))
+            .ToLookup(i => i.IssuePanelId);
 
         return new IssueBoardDto
         {
             OrganizationId = request.OrganizationId,
             OrganizationName = organizationName,
             Panels = panels
+                .OrderBy(p => p.CreatedOnUtc)
+                .ThenBy(p => p.Name, StringComparer.Ordinal)
+                .ThenBy(p => p.Id.ToString("D"), StringComparer.Ordinal)
+                .Select(p => new IssuePanelWithIssuesDto
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Issues = IssueProjections.Ordered(issuesByPanel[p.Id])
+                })
+                .ToList()
         };
     }
 }

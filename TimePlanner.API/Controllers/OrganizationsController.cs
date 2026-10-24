@@ -393,6 +393,8 @@ public class OrganizationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)] // not an issue of this organization
+    [ProducesResponseType(StatusCodes.Status409Conflict)] // already promoted to a task
     public async Task<IActionResult> DeleteIssue(Guid organizationId, Guid panelId, Guid issueId)
     {
         var command = new DeleteIssueCommand(organizationId, panelId, issueId);
@@ -420,13 +422,14 @@ public class OrganizationsController : ControllerBase
         return Ok(result);
     }
 
+    // includeScheduled=true also returns issues already promoted to a task (convertedToTaskId set).
     [HttpGet("{organizationId:guid}/issue-board")]
     [ProducesResponseType(typeof(IssueBoardDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetIssueBoard(Guid organizationId)
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetIssueBoard(Guid organizationId, [FromQuery] bool includeScheduled = false)
     {
-        var query = new GetIssueBoardQuery(organizationId);
+        var query = new GetIssueBoardQuery(organizationId, includeScheduled);
         var result = await _mediator.Send(query);
         return Ok(result);
     }

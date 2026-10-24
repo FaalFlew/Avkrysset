@@ -41,6 +41,12 @@ public class MoveIssueCommandHandler : IRequestHandler<MoveIssueCommand>
             throw new KeyNotFoundException("Issue not found in this organization.");
         }
 
+        // A promoted issue stays where it was (it is read-only, shown only with "Show scheduled").
+        if (issue.ConvertedToTaskItemId.HasValue)
+        {
+            throw new ConflictException("Cannot move an issue that has already been converted to a task.");
+        }
+
         // 2. Validate that the target panel exists within the same organization.
         var targetPanelExists = await _context.IssuePanels
             .AnyAsync(p => p.Id == request.NewPanelId && p.OrganizationId == request.OrganizationId, cancellationToken);

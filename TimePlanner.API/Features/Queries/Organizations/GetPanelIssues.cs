@@ -31,23 +31,12 @@ public class GetPanelIssuesQueryHandler : IRequestHandler<GetPanelIssuesQuery, L
 
         var issues = await _context.Issues
             .AsNoTracking()
-            .Include(i => i.Category) // Eagerly load Category to get its name
             .Where(i => i.IssuePanelId == request.PanelId && i.OrganizationId == request.OrganizationId)
             // Filter out issues that have already been converted to tasks
             .Where(i => i.ConvertedToTaskItemId == null)
-            .Select(i => new IssueDto
-            {
-                Id = i.Id,
-                Title = i.Title,
-                Notes = i.Notes,
-                CategoryId = i.CategoryId,
-                CategoryName = i.Category.Name,
-                OrganizationId = i.OrganizationId,
-                IssuePanelId = i.IssuePanelId
-            })
-            // You might want an OrderBy clause here as well
+            .Select(IssueProjections.ToDto)
             .ToListAsync(cancellationToken);
 
-        return issues;
+        return IssueProjections.Ordered(issues);
     }
 }

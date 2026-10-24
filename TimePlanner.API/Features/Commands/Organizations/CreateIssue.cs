@@ -86,8 +86,11 @@ public class CreateIssueCommandHandler : IRequestHandler<CreateIssueCommand, Iss
             Notes = issue.Notes,
             CategoryId = issue.CategoryId,
             CategoryName = category.Name,
+            CategoryColor = category.Color,
             OrganizationId = issue.OrganizationId,
-            IssuePanelId = issue.IssuePanelId
+            IssuePanelId = issue.IssuePanelId,
+            ConvertedToTaskId = null,
+            CreatedOnUtc = issue.CreatedOnUtc
         };
 
         await _notificationService.IssueCreated(request.OrganizationId, issueDto);

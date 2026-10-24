@@ -1,3 +1,4 @@
+using FluentValidation;
 using MediatR;
 using TimePlanner.API.Data;
 using TimePlanner.API.Exceptions;
@@ -9,6 +10,16 @@ using TimePlanner.API.DTOs.Organizations;
 namespace TimePlanner.API.Features.Commands.Organizations;
 
 public record UpdateIssuePanelCommand(Guid OrganizationId, Guid PanelId, string Name) : IRequest;
+
+public class UpdateIssuePanelCommandValidator : AbstractValidator<UpdateIssuePanelCommand>
+{
+    public UpdateIssuePanelCommandValidator()
+    {
+        RuleFor(x => x.OrganizationId).NotEmpty();
+        RuleFor(x => x.PanelId).NotEmpty();
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+    }
+}
 
 public class UpdateIssuePanelCommandHandler : IRequestHandler<UpdateIssuePanelCommand>
 {
@@ -47,11 +58,18 @@ public class UpdateIssuePanelCommandHandler : IRequestHandler<UpdateIssuePanelCo
             .AnyAsync(p => p.OrganizationId == request.OrganizationId && p.Name == request.Name && p.Id != request.PanelId, cancellationToken);
         if (nameExists)
         {
-            throw new ConflictException($"An issue panel with the name '{request.Name}' already exists in this organization.");
+            throw CreateIssuePanelCommandHandler.DuplicateName(request.Name);
         }
 
         panel.Name = request.Name;
-        await _context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
+        {
+            throw CreateIssuePanelCommandHandler.DuplicateName(request.Name);
+        }
 
         var panelDto = new IssuePanelDto
         {

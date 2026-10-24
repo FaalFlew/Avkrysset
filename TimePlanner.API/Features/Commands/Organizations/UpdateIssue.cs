@@ -2,7 +2,7 @@ using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TimePlanner.API.Data;
-using TimePlanner.API.DTOs.Organizations;
+using TimePlanner.API.Features.Queries.Organizations;
 using TimePlanner.API.Exceptions;
 using TimePlanner.API.Models.Organization;
 using TimePlanner.API.Services;
@@ -73,11 +73,15 @@ public class UpdateIssueCommandHandler : IRequestHandler<UpdateIssueCommand>
             throw new ConflictException("Cannot edit an issue that has already been converted to a task.");
         }
 
-        // Validate the category belongs to the current user (the editor)
-        var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId && c.UserId == currentUserId, cancellationToken);
-        if (!categoryExists)
+        // Categories are personal. Keeping the issue's current category (which may belong to the admin who created
+        // it) is always allowed; choosing a different one requires one of the editor's own categories (decision Q2).
+        if (request.CategoryId != issue.CategoryId)
         {
-            throw new ValidationException("The specified category was not found for your user.");
+            var categoryExists = await _context.Categories.AnyAsync(c => c.Id == request.CategoryId && c.UserId == currentUserId, cancellationToken);
+            if (!categoryExists)
+            {
+                throw new ValidationException("The specified category was not found for your user.");
+            }
         }
 
         issue.Title = request.Title;
@@ -86,18 +90,6 @@ public class UpdateIssueCommandHandler : IRequestHandler<UpdateIssueCommand>
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        // --- NOTIFICATION LOGIC ---
-        var categoryName = await _context.Categories.Where(c => c.Id == issue.CategoryId).Select(c => c.Name).SingleAsync(cancellationToken);
-        var issueDto = new IssueDto
-        {
-            Id = issue.Id,
-            Title = issue.Title,
-            Notes = issue.Notes,
-            CategoryId = issue.CategoryId,
-            CategoryName = categoryName,
-            OrganizationId = issue.OrganizationId,
-            IssuePanelId = issue.IssuePanelId
-        };
-        await _notificationService.IssueUpdated(request.OrganizationId, issueDto);
+        await _notificationService.IssueUpdated(request.OrganizationId, await IssueProjections.LoadAsync(_context, issue.Id, cancellationToken));
     }
 }

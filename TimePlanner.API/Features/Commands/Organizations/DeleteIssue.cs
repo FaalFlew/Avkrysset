@@ -34,14 +34,11 @@ public class DeleteIssueCommandHandler : IRequestHandler<DeleteIssueCommand>
         // Authorization: User must be Admin or Owner.
         await _context.RequireAdminOrOwner(currentUserId.Value, request.OrganizationId, "You do not have permission to delete issues in this organization.", cancellationToken);
 
+        // Scoped to the organization in the route (whose admin rights were just checked): looking the issue up by
+        // panel and id alone let an admin of one organization delete another organization's issues.
         var issue = await _context.Issues
-            .FirstOrDefaultAsync(i => i.Id == request.IssueId && i.IssuePanelId == request.PanelId, cancellationToken);
-
-        if (issue == null)
-        {
-            // Issue already deleted, desired state is achieved.
-            return;
-        }
+            .FirstOrDefaultAsync(i => i.Id == request.IssueId && i.OrganizationId == request.OrganizationId, cancellationToken)
+            ?? throw new KeyNotFoundException("Issue not found in this organization.");
 
         if (issue.ConvertedToTaskItemId.HasValue)
         {
@@ -50,7 +47,8 @@ public class DeleteIssueCommandHandler : IRequestHandler<DeleteIssueCommand>
 
         _context.Issues.Remove(issue);
         await _context.SaveChangesAsync(cancellationToken);
-        await _notificationService.IssueDeleted(request.OrganizationId, request.PanelId, request.IssueId);
+        // The issue's actual panel (it may have been moved since the client loaded the board).
+        await _notificationService.IssueDeleted(request.OrganizationId, issue.IssuePanelId, request.IssueId);
 
     }
 }
