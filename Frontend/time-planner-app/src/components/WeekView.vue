@@ -6,8 +6,15 @@
  * headers and columns can never misalign.
  *
  * Interactions
- * - Click empty space: draft at that quarter-hour (1h). Press-drag: draft over the dragged range
- *   (15-min snap). Touch tap: draft floored to 30 min. The global editor opens anchored to it.
+ * - Click empty space: draft at that quarter-hour; its length (and the hover preview's) is the smart
+ *   default — up to 1h, fitted to the free time before the next task (lib/newTaskDuration.ts).
+ *   Press-drag: draft over the dragged range (15-min snap). Touch tap: draft floored to 30 min.
+ *   The global editor opens anchored to it.
+ * - Copy & paste (stores/clipboardStore.ts): Ctrl/⌘+C copies the focused task; Ctrl/⌘+V pastes
+ *   at the slot under the mouse pointer, else right after the focused task, else at the copied
+ *   time of day on the selected day. Right-click a task: Copy / Duplicate to next day / week;
+ *   right-click free time (with something copied): Paste here. Tap-to-paste mode (after "Copy"
+ *   in the editor): a tap/click on free time pastes instead of creating.
  * - Task blocks: click/Enter edits; drag moves (long-press on touch); edges resize (fine
  *   pointers); keyboard ↑/↓ ±15 min, Shift+↑/↓ end ±15 min, ←/→ ±1 day, PageUp/PageDown ±1
  *   week, Delete removes.
@@ -19,10 +26,12 @@
  * Emits: navigate(day), advance(side)
  * Exposes: scrollToNow(smooth), autoScroll(smooth, force)
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import type { Task } from "@/types";
 import TaskBlock from "@/components/planner/TaskBlock.vue";
 import NowIndicator from "@/components/planner/NowIndicator.vue";
+import PlannerContextMenu from "@/components/planner/PlannerContextMenu.vue";
+import type { MenuItem } from "@/components/ui/types";
 import { blockExtent, layoutLanes, type LanePlacement } from "@/components/planner/laneLayout";
 import {
   canDeleteTask,
@@ -32,7 +41,7 @@ import {
   organizationLabel,
   overlapMessage,
 } from "@/lib/taskAccess";
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { CalendarPlus, CalendarPlus2, ChevronLeft, ChevronRight, ClipboardPaste, Copy } from "lucide-vue-next";
 import { hasOpenOverlay } from "@/components/ui/dialogStack";
 import {
   abortSwipe,
@@ -60,8 +69,12 @@ import {
 import { useTaskEditor } from "@/composables/useTaskEditor";
 import { useBreakpoint } from "@/composables/useMediaQuery";
 import { useNow, useToday } from "@/composables/useClock";
+import { useHotkeyScope } from "@/composables/useHotkeys";
 import { useTaskStore } from "@/stores/taskStore";
 import { useUIStore } from "@/stores/uiStore";
+import { useClipboardStore } from "@/stores/clipboardStore";
+import { resolvePasteStart } from "@/lib/taskClipboard";
+import { isMac } from "@/lib/platform";
 import {
   addDays,
   atMinutesOfDay,
@@ -75,6 +88,7 @@ import {
   toDateKey,
   isoWeekday,
   type DateKey,
+  type UtcIsoString,
 } from "@/lib/datetime";
 import {
   displayTitle,
@@ -108,6 +122,7 @@ const emit = defineEmits<{
 
 const taskStore = useTaskStore();
 const uiStore = useUIStore();
+const clipboard = useClipboardStore();
 const editor = useTaskEditor();
 const { isCoarse, prefersReducedMotion } = useBreakpoint();
 const today = useToday();
@@ -437,15 +452,36 @@ const draftBlock = computed(() => {
 const showNow = computed(() => props.days.includes(today.value));
 const cornerLabel = computed(() => formatGridCornerOffset(now.value));
 const regionLabel = computed(() => formatGridRegionLabel(props.days));
+const COPY_HINT = `${isMac ? "Command" : "Control"} plus C copies, the context menu key shows more actions.`;
 const keyboardHint = computed(() =>
   isSingleDay.value
-    ? "Enter to edit. Up and down arrows move 15 minutes, left and right arrows move a day, Page Up and Page Down move a week, Shift plus up or down resizes, Delete removes."
-    : "Enter to edit. Arrow keys move, Page Up and Page Down move a week, Shift plus up or down resizes, Delete removes."
+    ? `Enter to edit. Up and down arrows move 15 minutes, left and right arrows move a day, Page Up and Page Down move a week, Shift plus up or down resizes, Delete removes. ${COPY_HINT}`
+    : `Enter to edit. Arrow keys move, Page Up and Page Down move a week, Shift plus up or down resizes, Delete removes. ${COPY_HINT}`
 );
 
 // ------------------------------------------------------------------ hover preview + create
 const canHover = computed(() => !isCoarse.value);
 const hover = ref<{ day: DateKey; minutes: number } | null>(null);
+/** Tap-to-paste mode: a tap/click on free time pastes the copy instead of creating a task. */
+const pasteArmed = computed(() => clipboard.isArmed);
+
+/** The hover preview: the smart default length (or the copy's, while pasting) at the hovered slot. */
+const hoverPreview = computed(() => {
+  const slot = hover.value;
+  if (!slot) return null;
+  const start = atMinutesOfDay(slot.day, slot.minutes);
+  const copied = pasteArmed.value ? clipboard.copied : null;
+  const hours = copied ? copied.duration : editor.suggestDurationAt(start).minutes / 60;
+  const height = blockExtent(start, hours).height;
+  const time = formatTimeOfDay(slot.minutes);
+  return {
+    day: slot.day,
+    top: slot.minutes * PX_PER_MINUTE,
+    height,
+    short: height < 24,
+    label: copied ? `Paste “${displayTitle(copied.title)}” · ${time}` : `+ ${time}`,
+  };
+});
 
 interface CreateState {
   day: DateKey;
@@ -475,6 +511,7 @@ function isEmptySpace(event: Event): boolean {
 }
 
 function onColumnPointerMove(event: PointerEvent, day: DateKey, index: number): void {
+  if (event.pointerType === "mouse") pointerAt = { x: event.clientX, y: event.clientY };
   if (!canHover.value || event.pointerType !== "mouse") return;
   if (creating.value || drag.dragTaskId.value || editor.state.open || !isEmptySpace(event)) {
     hover.value = null;
@@ -486,6 +523,7 @@ function onColumnPointerMove(event: PointerEvent, day: DateKey, index: number): 
 
 function onColumnPointerLeave(): void {
   hover.value = null;
+  pointerAt = null;
 }
 
 function onColumnPointerDown(event: PointerEvent, day: DateKey, index: number): void {
@@ -520,6 +558,7 @@ function onCreateMove(event: PointerEvent): void {
     if (distance > 10) stopCreate(); // scrolling, not tapping
     return;
   }
+  if (pasteArmed.value) return; // pasting: a click pastes, no drag-to-create
   if (!c.active && distance < 4) return;
   c.active = true;
   hover.value = null;
@@ -532,9 +571,12 @@ function onCreateUp(event: PointerEvent): void {
   const c = creating.value;
   if (!c || event.pointerId !== c.pointerId) return;
   stopCreate();
-  const from = c.active ? c.from : c.anchor;
-  const durationMinutes = c.active ? c.to - c.from : 60;
-  openDraft(c.day, c.index, from, durationMinutes);
+  if (pasteArmed.value) {
+    void pasteAt(atMinutesOfDay(c.day, c.anchor));
+    return;
+  }
+  // A drag keeps its length; a click/tap gets the smart default.
+  openDraft(c.day, c.index, c.active ? c.from : c.anchor, c.active ? c.to - c.from : null);
 }
 
 function onCreateCancel(): void {
@@ -548,7 +590,10 @@ function stopCreate(): void {
   creating.value = null;
 }
 
-function openDraft(day: DateKey, index: number, fromMinutes: number, durationMinutes: number): void {
+/** Open the editor on a draft; `durationMinutes` null = the smart default for that start. */
+function openDraft(day: DateKey, index: number, fromMinutes: number, durationMinutes: number | null): void {
+  const start = atMinutesOfDay(day, fromMinutes);
+  const minutes = durationMinutes ?? editor.suggestDurationAt(start).minutes;
   const column = columnEls.value[index];
   const rect = column?.getBoundingClientRect();
   const anchorRect = rect
@@ -557,12 +602,172 @@ function openDraft(day: DateKey, index: number, fromMinutes: number, durationMin
         right: rect.right - 6,
         width: rect.width - 8,
         top: rect.top + fromMinutes * PX_PER_MINUTE,
-        bottom: rect.top + (fromMinutes + durationMinutes) * PX_PER_MINUTE,
-        height: durationMinutes * PX_PER_MINUTE,
+        bottom: rect.top + (fromMinutes + minutes) * PX_PER_MINUTE,
+        height: minutes * PX_PER_MINUTE,
       }
     : null;
   hover.value = null;
-  editor.openCreate({ start: atMinutesOfDay(day, fromMinutes), durationH: durationMinutes / 60, anchorRect });
+  editor.openCreate({ start, durationH: minutes / 60, anchorRect });
+}
+
+// ------------------------------------------------------------------ copy, paste, duplicate
+/** Last mouse position over a day column (null once it leaves): Ctrl/⌘+V pastes under it. */
+let pointerAt: { x: number; y: number } | null = null;
+/** Pointer type of the latest press in the grid (touch long-presses never open our menu). */
+let lastPointerType = "";
+
+/** The 15-minute slot under the mouse pointer, when it is over the visible part of a column. */
+function slotUnderPointer(): { day: DateKey; minutes: number } | null {
+  const el = scroller.value;
+  const point = pointerAt;
+  if (!el || !point) return null;
+  const bounds = el.getBoundingClientRect();
+  const gutter = parseFloat(getComputedStyle(el).getPropertyValue("--gutter-w")) || 56;
+  if (point.y < bounds.top + DAYHEAD_PX || point.y > bounds.bottom) return null;
+  if (point.x < bounds.left + gutter || point.x > bounds.left + el.clientWidth) return null;
+  const index = columnEls.value.slice(0, props.days.length).findIndex((column) => {
+    const rect = column.getBoundingClientRect();
+    return point.x >= rect.left && point.x < rect.right;
+  });
+  const day = props.days[index];
+  return day ? { day, minutes: minutesAt(index, point.y, SNAP_MINUTES) } : null;
+}
+
+/** The task shown by a block element in this grid (as displayed, incl. an uncommitted keyboard move). */
+function taskOfBlock(element: Element | null | undefined): Task | null {
+  const block = element?.closest?.<HTMLElement>("button.task-block--task[data-task-id]");
+  if (!block || !scroller.value?.contains(block)) return null;
+  const id = block.dataset.taskId!;
+  return keyboard.overrides.value[id] ?? taskStore.getTaskById(id) ?? null;
+}
+
+/** The task block that has keyboard focus. */
+function focusedTask(): Task | null {
+  return taskOfBlock(document.activeElement);
+}
+
+/** The task block under the mouse pointer (so hovering a task + Ctrl/⌘+C copies it). */
+function hoveredTask(): Task | null {
+  const point = pointerAt;
+  return point ? taskOfBlock(document.elementFromPoint(point.x, point.y)) : null;
+}
+
+/** Paste the copy at `start`; `focusResult` moves keyboard focus to the new task (chain pastes). */
+async function pasteAt(start: UtcIsoString, focusResult = false): Promise<void> {
+  hover.value = null;
+  const created = await clipboard.paste(start);
+  if (!created) return;
+  flash(created.id);
+  if (focusResult) refocusTask(created.id);
+}
+
+async function duplicate(task: Task, days: number): Promise<void> {
+  const created = await clipboard.duplicate(task, days);
+  if (created) flash(created.id);
+}
+
+useHotkeyScope({
+  "Mod+c": () => {
+    const task = hoveredTask() ?? focusedTask();
+    if (!task) return false; // nothing of ours selected: the browser's copy
+    keyboard.flush(task.id);
+    clipboard.copy(task);
+  },
+  "Mod+v": () => {
+    const copied = clipboard.copied;
+    if (!copied) return false;
+    const focused = focusedTask();
+    const hadFocus = !!focused || document.activeElement === scroller.value;
+    const { start } = resolvePasteStart({
+      pointerSlot: slotUnderPointer(),
+      focused,
+      selectedDay: uiStore.currentDate,
+      minutesOfDay: copied.minutesOfDay,
+    });
+    void pasteAt(start, hadFocus);
+  },
+});
+
+const contextMenu = shallowRef<{ x: number; y: number; items: MenuItem[]; label: string; returnFocus: HTMLElement | null }>({
+  x: 0,
+  y: 0,
+  items: [],
+  label: "",
+  returnFocus: null,
+});
+const contextMenuOpen = ref(false);
+
+function taskMenuItems(task: Task): MenuItem[] {
+  return [
+    {
+      id: "copy",
+      label: "Copy",
+      icon: Copy,
+      shortcut: ["Mod", "C"],
+      // Org tasks are copied as my own (personal) tasks.
+      description: isOrgTask(task) ? "As a personal task" : undefined,
+      onSelect: () => clipboard.copy(task),
+    },
+    { id: "duplicate-day", label: "Duplicate to next day", icon: CalendarPlus, onSelect: () => void duplicate(task, 1) },
+    { id: "duplicate-week", label: "Duplicate to next week", icon: CalendarPlus2, onSelect: () => void duplicate(task, 7) },
+  ];
+}
+
+/**
+ * Right-click (or the context-menu key on a focused task): task actions on a task, "Paste here"
+ * on free time when something is copied — otherwise the browser's own menu. Touch long-presses
+ * stay task drags (TaskBlock suppresses the native menu for them).
+ */
+function onColumnContextMenu(event: MouseEvent, day: DateKey, index: number): void {
+  const pointerType = (event as Partial<PointerEvent>).pointerType ?? lastPointerType;
+  if (pointerType === "touch") return;
+  if (drag.dragTaskId.value || creating.value?.active) return;
+  const target = event.target as HTMLElement | null;
+  const block = target?.closest<HTMLElement>(".task-block");
+  if (block) {
+    const id = block.matches("button.task-block--task") ? block.dataset.taskId : undefined;
+    const task = id ? keyboard.overrides.value[id] ?? taskStore.getTaskById(id) : undefined;
+    if (!task) return;
+    event.preventDefault();
+    keyboard.flush(task.id);
+    const rect = block.getBoundingClientRect();
+    const inside =
+      event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    showContextMenu({
+      // The context-menu key reports no useful point: open at the block instead.
+      x: inside ? event.clientX : rect.left + 8,
+      y: inside ? event.clientY : rect.top + Math.min(rect.height, 24),
+      items: taskMenuItems(task),
+      label: `Actions for ${displayTitle(task.title)}`,
+      returnFocus: block,
+    });
+    return;
+  }
+  const copied = clipboard.copied;
+  if (!copied) return;
+  event.preventDefault();
+  const start = atMinutesOfDay(day, minutesAt(index, event.clientY, SNAP_MINUTES));
+  showContextMenu({
+    x: event.clientX,
+    y: event.clientY,
+    items: [
+      {
+        id: "paste",
+        label: `Paste “${displayTitle(copied.title)}” here`,
+        icon: ClipboardPaste,
+        shortcut: ["Mod", "V"],
+        onSelect: () => void pasteAt(start),
+      },
+    ],
+    label: `Free time at ${formatTimeOfDay(minutesSinceStartOfDay(start))}`,
+    returnFocus: scroller.value,
+  });
+}
+
+function showContextMenu(menu: typeof contextMenu.value): void {
+  hover.value = null;
+  contextMenu.value = menu;
+  contextMenuOpen.value = true;
 }
 
 // ------------------------------------------------------------------ task block events
@@ -768,6 +973,7 @@ function swipeWidth(): number {
 }
 
 function onSwipePointerDown(event: PointerEvent): void {
+  lastPointerType = event.pointerType;
   if (!swipeEnabled.value || event.pointerType !== "touch") return;
   if (swipe && swipe.pointerId !== event.pointerId) {
     // A second finger (pinch, two-finger scroll): this is not a swipe.
@@ -985,14 +1191,16 @@ const gridStyle = computed(() => ({
         @pointerdown="onColumnPointerDown($event, day, index)"
         @pointermove="onColumnPointerMove($event, day, index)"
         @pointerleave="onColumnPointerLeave"
+        @contextmenu="onColumnContextMenu($event, day, index)"
       >
         <div
-          v-if="hover && hover.day === day"
+          v-if="hoverPreview && hoverPreview.day === day"
           class="hover-slot"
-          :style="{ top: `${hover.minutes * PX_PER_MINUTE}px`, height: `${HOUR_HEIGHT - 2}px` }"
+          :class="{ 'hover-slot--short': hoverPreview.short, 'hover-slot--paste': pasteArmed }"
+          :style="{ top: `${hoverPreview.top}px`, height: `${hoverPreview.height}px` }"
           aria-hidden="true"
         >
-          <span class="hover-slot__label tabular">+ {{ formatTimeOfDay(hover.minutes) }}</span>
+          <span class="hover-slot__label tabular">{{ hoverPreview.label }}</span>
         </div>
 
         <TaskBlock
@@ -1043,6 +1251,15 @@ const gridStyle = computed(() => ({
       <span :key="edgeCue.cycle" class="edge-cue__progress" :style="{ animationDuration: `${edgeCue.durationMs}ms` }" />
     </span>
   </div>
+
+  <PlannerContextMenu
+    v-model:open="contextMenuOpen"
+    :items="contextMenu.items"
+    :x="contextMenu.x"
+    :y="contextMenu.y"
+    :label="contextMenu.label"
+    :return-focus="contextMenu.returnFocus"
+  />
   </div>
 </template>
 
@@ -1323,7 +1540,22 @@ const gridStyle = computed(() => ({
   background-color: var(--grid-hover);
   pointer-events: none;
 }
+.hover-slot--short {
+  display: flex;
+  align-items: center;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.hover-slot--paste {
+  outline: 1px dashed var(--accent-border);
+  outline-offset: -1px;
+}
 .hover-slot__label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: var(--fs-11);
   line-height: var(--lh-11);
   font-weight: var(--fw-medium);

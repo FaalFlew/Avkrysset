@@ -28,6 +28,7 @@ import {
   type InstantRange,
 } from "@/lib/datetime";
 import { OTHER_COLOR } from "@/lib/categoryPalette";
+import { displayTitle, formatMoveAnnouncement } from "@/lib/plannerFormat";
 import {
   apiErrorMessage,
   isBadRequest,
@@ -140,6 +141,15 @@ export const useTaskStore = defineStore("tasks", {
     getTaskById: (state) => (id: string) =>
       state.tasks.find((t) => t.id === id) ?? state.todayTasks.find((t) => t.id === id),
     otherCategory: (state) => state.categories.find((c) => c.name === "Other"),
+    /**
+     * Every loaded task of my planner (the visible week plus the signed-in Today list, without
+     * duplicates): what a new task may not overlap and what its default duration fits into.
+     */
+    plannedTasks: (state): Task[] => {
+      if (state.todayTasks.length === 0) return state.tasks;
+      const ids = new Set(state.tasks.map((t) => t.id));
+      return [...state.tasks, ...state.todayTasks.filter((t) => !ids.has(t.id))];
+    },
     /** Any request in flight (legacy aggregate; prefer the specific flags). */
     isLoading: (state) => state.isInitializing || state.isLoadingWeek || state.isLoadingToday,
   },
@@ -448,6 +458,47 @@ export const useTaskStore = defineStore("tasks", {
       if (this.isInTodayList(newTask)) this.todayTasks.push(newTask);
       uiStore.dismissToast(TOAST_KEYS.addTask); // a retry worked: its earlier error is stale
       return newTask;
+    },
+
+    /**
+     * Create a copy of a task (paste, duplicate). Nothing is created when it would overlap a
+     * loaded task — same message as a refused move, no API call; the server's 409 covers tasks
+     * that aren't loaded (e.g. next week while signed in). On success a toast ("Pasted “Deep
+     * work”") offers Undo for 6 seconds (Ctrl/⌘+Z too), which deletes just this copy, and the live
+     * region says where it went.
+     */
+    async addTaskCopy(taskData: NewTaskData, kind: "paste" | "duplicate"): Promise<Task | null> {
+      const uiStore = useUIStore();
+      const clash = this.plannedTasks.find((existing) => isOverlapping(taskData, existing));
+      if (clash) {
+        const message = overlapMessage(clash);
+        uiStore.showToast(message, "error", 4000, { key: TOAST_KEYS.addTask });
+        return null;
+      }
+
+      const epoch = useAuthStore().sessionEpoch;
+      const created = await this.addTask(taskData);
+      if (!created) return null;
+
+      const title = displayTitle(created.title);
+      const shortTitle = title.length > 40 ? `${title.slice(0, 39).trimEnd()}…` : title;
+      const message =
+        kind === "paste"
+          ? `Pasted “${shortTitle}”`
+          : `Duplicated “${shortTitle}” to ${formatDate(created.start, "weekdayShort")}`;
+      uiStore.showToast(message, "success", 6000, {
+        undo: true,
+        action: {
+          label: "Undo",
+          onClick: () => {
+            // Never undo into another session (e.g. right after a logout).
+            if (useAuthStore().sessionEpoch !== epoch) return;
+            void this.deleteTask(created.id, { undo: false });
+          },
+        },
+      });
+      uiStore.announce(formatMoveAnnouncement(created, kind === "paste" ? "Pasted" : "Duplicated"));
+      return created;
     },
 
     /**

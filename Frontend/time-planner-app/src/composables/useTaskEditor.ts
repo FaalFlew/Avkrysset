@@ -3,12 +3,15 @@
 // Every entry point (N, the FAB, the sidebar button, a click/drag on the grid, a Today row, a
 // free-time gap) opens the same editor through this module-level singleton. The editor writes
 // its live field values into `draft`, so the planner can show a draft block that follows them.
+// A new task without an explicit duration gets the smart default (src/lib/newTaskDuration.ts):
+// up to 1 hour, fitted to the free time before the next loaded task.
 
 import { reactive, readonly, ref } from "vue";
 import type { Task } from "@/types";
 import type { AnchorRect } from "@/components/ui/types";
 import type { DateKey, UtcIsoString } from "@/lib/datetime";
 import { defaultNewTaskStart } from "@/lib/plannerFormat";
+import { suggestNewTaskDuration, type DurationSuggestion } from "@/lib/newTaskDuration";
 
 export type EditorMode = "create" | "edit";
 
@@ -66,6 +69,13 @@ let lastSavedTimer: number | undefined;
 
 /** Visible planner days, registered by the planner while it is mounted (for the default start). */
 let visibleDaysProvider: (() => readonly DateKey[]) | null = null;
+/** Every loaded task (registered by App.vue), for the default duration of a new task. */
+let plannedTasksProvider: (() => readonly Pick<Task, "start" | "title">[]) | null = null;
+
+/** Default duration for a new task starting at `start` (fits the free time before the next task). */
+function suggestDurationAt(start: UtcIsoString): DurationSuggestion {
+  return suggestNewTaskDuration(start, plannedTasksProvider?.() ?? []);
+}
 
 function toRect(rect: AnchorRect | DOMRect | null | undefined): AnchorRect | null {
   if (!rect) return null;
@@ -81,6 +91,7 @@ function toRect(rect: AnchorRect | DOMRect | null | undefined): AnchorRect | nul
 
 export interface OpenCreateOptions {
   start?: UtcIsoString;
+  /** Explicit duration (drag-to-create, a free-time gap). Omitted: the smart default. */
   durationH?: number;
   title?: string;
   anchorRect?: AnchorRect | DOMRect | null;
@@ -88,7 +99,8 @@ export interface OpenCreateOptions {
 
 function openCreate(options: OpenCreateOptions = {}): void {
   draft.start = options.start ?? defaultNewTaskStart(visibleDaysProvider?.());
-  draft.durationH = options.durationH && options.durationH > 0 ? options.durationH : 1;
+  draft.durationH =
+    options.durationH && options.durationH > 0 ? options.durationH : suggestDurationAt(draft.start).minutes / 60;
   draft.title = options.title ?? "";
   draft.categoryId = "";
   state.mode = "create";
@@ -138,6 +150,16 @@ function setVisibleDaysProvider(provider: (() => readonly DateKey[]) | null): vo
   visibleDaysProvider = provider;
 }
 
+/** Whether the planner is on screen (it registers its visible days while mounted). */
+function isPlannerShown(): boolean {
+  return visibleDaysProvider !== null;
+}
+
+/** Register the source of loaded tasks for the default duration (App.vue). */
+function setPlannedTasksProvider(provider: (() => readonly Pick<Task, "start" | "title">[]) | null): void {
+  plannedTasksProvider = provider;
+}
+
 export function useTaskEditor() {
   return {
     /** Read-only editor state: open, mode, task, categoryHint, anchorRect, session. */
@@ -151,5 +173,8 @@ export function useTaskEditor() {
     setAnchorRect,
     markSaved,
     setVisibleDaysProvider,
+    setPlannedTasksProvider,
+    suggestDurationAt,
+    isPlannerShown,
   };
 }

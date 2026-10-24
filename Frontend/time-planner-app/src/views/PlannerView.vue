@@ -3,11 +3,13 @@
 /**
  * Planner page: header (Today / ‹ › / month picker / week badge / time zone), the week grid
  * (a single day with a scrollable day strip on phones), loading/error states and first-run help.
- * Shortcuts here: T today, J/→ next, K/← previous (week; day on phones), D week picker.
+ * Shortcuts here: T today, J/→ next, K/← previous (week; day on phones), D week picker, Esc ends
+ * tap-to-paste. After "Copy" in the task editor a banner says "Tap a time to paste “…”" (Cancel);
+ * it stays across day/week changes until a paste succeeds or it is cancelled.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import { RotateCw, TriangleAlert } from "lucide-vue-next";
+import { ClipboardPaste, RotateCw, TriangleAlert } from "lucide-vue-next";
 import WeekView from "@/components/WeekView.vue";
 import PlannerHeader from "@/components/planner/PlannerHeader.vue";
 import WeekStrip from "@/components/planner/WeekStrip.vue";
@@ -17,6 +19,8 @@ import UiButton from "@/components/ui/UiButton.vue";
 import { useTasks } from "@/composables/useTasks";
 import { useTaskStore } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
+import { useClipboardStore } from "@/stores/clipboardStore";
+import { displayTitle } from "@/lib/plannerFormat";
 import { useBreakpoint } from "@/composables/useMediaQuery";
 import { useToday } from "@/composables/useClock";
 import { useTaskEditor } from "@/composables/useTaskEditor";
@@ -32,7 +36,8 @@ const authStore = useAuthStore();
 const editor = useTaskEditor();
 const { currentDate, currentWeek, tasks, templates, categories, nextWeek, previousWeek, nextDay, previousDay, goToToday, selectDate } =
   useTasks();
-const { isMobile, isDesktop } = useBreakpoint();
+const { isMobile, isDesktop, isCoarse } = useBreakpoint();
+const clipboard = useClipboardStore();
 const { isLoadingWeek, isInitializing, weekError, initError } = storeToRefs(taskStore);
 const today = useToday();
 
@@ -87,7 +92,17 @@ useHotkeyScope({
     if (!isNeutralTarget(event.target)) return false;
     goPrev();
   },
+  Escape: () => {
+    if (!clipboard.isArmed) return false;
+    cancelPaste();
+  },
 });
+
+// ------------------------------------------------------------------ tap to paste
+const pasteTitle = computed(() => (clipboard.isArmed && clipboard.copied ? displayTitle(clipboard.copied.title) : null));
+function cancelPaste(): void {
+  clipboard.disarm();
+}
 
 // ------------------------------------------------------------------ states
 const isBusy = computed(() => isLoadingWeek.value || isInitializing.value);
@@ -196,6 +211,13 @@ const showOnboarding = computed(
         />
 
         <div class="planner__overlay" aria-live="polite">
+          <div v-if="pasteTitle" class="paste-banner">
+            <ClipboardPaste :size="16" class="paste-banner__icon" />
+            <p class="paste-banner__text">
+              {{ isCoarse ? "Tap" : "Click" }} a time to paste “<span class="paste-banner__title">{{ pasteTitle }}</span>”
+            </p>
+            <UiButton class="paste-banner__action" size="sm" variant="ghost" @click="cancelPaste">Cancel</UiButton>
+          </div>
           <div v-if="errorMessage" class="banner" role="alert">
             <TriangleAlert :size="16" class="banner__icon" />
             <p class="banner__text">{{ errorMessage }}</p>
@@ -259,6 +281,9 @@ const showOnboarding = computed(
   left: 50%;
   z-index: var(--z-sticky);
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
   justify-content: center;
   width: min(640px, calc(100% - 32px));
   transform: translateX(-50%);
@@ -279,6 +304,38 @@ const showOnboarding = computed(
   color: var(--text-secondary);
   text-align: center;
   pointer-events: none;
+}
+.paste-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-raised);
+  box-shadow: var(--shadow-sm);
+}
+.paste-banner__icon {
+  flex-shrink: 0;
+  color: var(--accent-text);
+}
+.paste-banner__text {
+  display: flex;
+  min-width: 0;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.paste-banner__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--fw-semibold);
+}
+.paste-banner__action {
+  flex-shrink: 0;
 }
 .banner {
   display: flex;
