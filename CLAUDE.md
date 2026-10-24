@@ -43,6 +43,12 @@ Current roadmap: `docs/plans/pdf-export-and-organizations.md` (phases, decisions
   Week navigation is week-number based (the owner prefers it — keep that interaction model).
 - No new npm dependencies without the owner's approval.
 
+## Testing (owner's rule)
+- Only write a test if it would **fail when the code is broken in a way that matters** — user-visible behaviour, data
+  correctness, security, a regression of a real bug, or tricky pure logic (datetime/DST, ordering, ranges). Especially on the
+  frontend: no tests that mirror implementation details, snapshot markup, assert on CSS classes, re-test Vue/Pinia/axios, or
+  duplicate existing coverage. A few high-value tests beat many shallow ones; when reporting, say what the tests protect.
+
 ## Environment gotchas
 - **Line endings:** C# files are CRLF. Git Bash `sed -i` silently converts files to LF — prefer the Edit tool, or restore CRLF.
 - **Ports:** pick a unique Vite port per agent (`npx vite --port <n> --strictPort`); the browser pane is shared — create your own tab
@@ -56,6 +62,8 @@ Current roadmap: `docs/plans/pdf-export-and-organizations.md` (phases, decisions
   (`git add TimePlanner.API TimePlanner.API.Tests` vs `git add Frontend`), retry if `index.lock` exists, never `git add -A` blindly.
 - Never force-push, rewrite published history, or commit secrets/build output (see `.gitignore`).
 - Open a PR from the feature branch into `development` with a short title and 1–3 line description.
+- Stacked PRs (a feature branch on top of another unmerged one) are welcome — say "stacked on #X, merge #X first" in the PR.
+  Merge with "Create a merge commit" (rebase/squash would break stacked branches).
 
 ## Handoffs
 - Agents keep a checkpoint (task, done, next, how to verify, running servers/DBs) and update it at each milestone so work survives
