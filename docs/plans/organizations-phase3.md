@@ -121,7 +121,7 @@ ProfileDto /*E*/ { id; email; displayName: string|null }
 | C | `GET /organizations/{id}/members/me` | → 200 `MembershipDto` | **404 unless Active** | O A M |
 | E | `GET /organizations/{id}/members/selectable` | → 200 `SelectableMemberDto[]` (Active) | 403 | O A |
 | C | `PUT /organizations/{id}/members/{userId}/role` | `{organizationId, userId, newRole: "Admin"\|"Member"}` → 204 | 400 owner target, 403 (A demoting A), **404 target not Active** | O A |
-| E | `DELETE /organizations/{id}/members/{userId}?hardDeleteTasks=false` | → 204 (idempotent) | 409 owner target, 403 | O A (see §8 Q-E) |
+| E | `DELETE /organizations/{id}/members/{userId}?hardDeleteTasks=false` | → 204 (idempotent) | 409 owner target, 403 | O; A only for Member targets (403 for an Admin target, §8 Q-E) |
 | E | `POST /organizations/{id}/members/me/leave` | → 204 | 409 owner | A M |
 | E | `PUT /organizations/{id}/members/me/settings` | `{organizationId, statusMessage ≤150 \| null}` → 204 | 400 | O A M |
 | E | `POST /organizations/{id}/transfer-ownership` | `{organizationId, newOwnerUserId}` → 204 (target must be an active Admin) | 400, 403 | O |
@@ -494,7 +494,7 @@ Edits to 3B files must be additive. Ownership:
 | View/copy join codes | ✓ | ✓ | ✗ | **API: Owner only → 3A (Q8)** |
 | Invite, list/rescind invites | ✓ | ✓ | ✗ | |
 | Change role | ✓ | ✓ promote only; ◐ demote an admin "Only the owner…" | ✗ | owner target ✗ |
-| Remove member | ✓ | ✓ (target Admin: see §8 Q-E) | ✗ | owner target ✗ |
+| Remove member | ✓ | ✓ (not an Admin target — Owner only, §8 Q-E) | ✗ | owner target ✗ |
 | Leave | ◐ "Transfer ownership first" | ✓ | ✓ | |
 | Own status message | ✓ | ✓ | ✓ | |
 | See every member's schedule, member filter | ✓ | ✓ | ✗ (own tasks only, Q6) | **hub sends all tasks to all → 3F** |
@@ -546,11 +546,13 @@ Other places where the API disagrees and 3A/3F fix it: `members/me` 200 for form
 
 ## 8. Open questions (new; recommendation in bold)
 
+**DECIDED 2026-10-24: the owner approved every recommendation below (Q-A to Q-F).**
+
 | # | Question | Recommendation |
 |---|---|---|
 | Q-A | Q6 (members see only their own tasks) conflicts with Q7 (every member reads the whole activity feed, including task titles). | **Members see task activity only for tasks assigned to them**; member, board and org events stay visible to all. |
 | Q-B | Activity source: keep it derived from existing tables (no migration, but no who-removed-whom history beyond `UpdatedBy`, no deletes, latest update only), or add an append-only `OrganizationActivities` table written by every handler? | **Derived in Phase 3**; put the event table in the backlog (it fits with Phase 4 exports). |
 | Q-C | Copy/paste in the org schedule (backlog item 3). | **Paste into an org schedule creates an org task in that org** (assignees as in 3C; a member → self); the personal planner always pastes personal copies. |
 | Q-D | Board: converted issues disappear today, while the plan mentions a "Scheduled" badge; there is no ordering column. | **A "Show scheduled" toggle (off by default) using `includeScheduled`; no within-panel or panel reordering in Phase 3** (oldest first; no migration). |
-| Q-E | An Admin can remove another Admin today, but can't demote one (only the Owner can). | **Only the Owner may remove an Admin** (403 for admins), consistent with demotion. Business-rule change → needs a yes. |
+| Q-E | An Admin can remove another Admin today, but can't demote one (only the Owner can). | **Only the Owner may remove an Admin** (403 for admins), consistent with demotion. Business-rule change — approved by the owner. |
 | Q-F | Invitation preview and decline by token without signing in. | **Yes, both anonymous.** The 256-bit token is the secret; the preview shows a masked email. Accept still needs the matching account. |
