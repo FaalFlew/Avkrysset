@@ -87,6 +87,10 @@ onBeforeUnmount(() => uninstallWarmup?.());
 // A session that ends (or starts) closes the editor, confirm dialogs and Undo toasts of the old one.
 onSessionChange(closeSessionBoundUi);
 
+// A new task's default duration fits the free time before the next loaded task (any page).
+editor.setPlannedTasksProvider(() => taskStore.plannedTasks);
+onBeforeUnmount(() => editor.setPlannedTasksProvider(null));
+
 // ---------------------------------------------------------------- hotkeys
 function guard(fn: () => unknown): () => boolean | void {
   return () => {

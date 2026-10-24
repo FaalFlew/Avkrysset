@@ -3,7 +3,8 @@
  * the assignees, and a Close button only — no fields, no Save, no Delete. Editable org tasks get
  * the normal form plus a "Created by … · Acme" line. Rendered with Vue's server renderer (the
  * project has no DOM test environment); UiDialog is replaced by a plain stand-in that renders
- * its title, default slot and footer slot (its focus trap/measuring need a real DOM).
+ * its title, default slot and footer slot (its focus trap/measuring need a real DOM), and UiMenu
+ * (the "More actions" menu) by one that renders just its trigger.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSSRApp, h } from "vue";
@@ -28,6 +29,18 @@ vi.mock("@/components/ui/UiDialog.vue", async () => {
                 h("footer", slots.footer?.({ close })),
               ])
             : null;
+      },
+    }),
+  };
+});
+
+vi.mock("@/components/ui/UiMenu.vue", async () => {
+  const { defineComponent } = await import("vue");
+  return {
+    default: defineComponent({
+      name: "UiMenuStub",
+      setup(_, { slots }) {
+        return () => slots.trigger?.({ open: false, toggle: () => {}, triggerProps: {} });
       },
     }),
   };

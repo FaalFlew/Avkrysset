@@ -9,6 +9,10 @@
  * · date / start / end (end ≤ start means "+1 day") · duration chips · category chips (+ new).
  * Footer: Delete (edit; no confirm — optimistic with Undo) · Cancel · Add task / Save (↵).
  * Ctrl/⌘+Enter saves from any field. Failed saves keep the dialog open (the store toasts why).
+ * "More actions" (edit and read-only views): Copy (then tap/click a time in the planner to paste)
+ * and Duplicate to the next day / week — all act on the saved task and close the editor, like
+ * Delete. A new task's default duration fits the free time before the next task; when not even
+ * 15 minutes are free a note says so (saving still runs the overlap check).
  *
  * Datetime rules preserved from the datetime hand-off: when the date and start fields are left
  * unchanged, the original start instant is kept exactly (DST fall-back safety); a DST-gap or
@@ -16,13 +20,15 @@
  */
 import { computed, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
-import { CircleAlert, Trash2, X } from "lucide-vue-next";
+import { CalendarPlus, CalendarPlus2, CircleAlert, Copy, Ellipsis, Trash2, X } from "lucide-vue-next";
 import type { Category, Task, TaskTemplate } from "@/types";
 import UiDialog from "@/components/ui/UiDialog.vue";
 import UiButton from "@/components/ui/UiButton.vue";
 import UiIconButton from "@/components/ui/UiIconButton.vue";
 import UiInput from "@/components/ui/UiInput.vue";
 import UiKbd from "@/components/ui/UiKbd.vue";
+import UiMenu from "@/components/ui/UiMenu.vue";
+import type { MenuItem } from "@/components/ui/types";
 import CategoryChips from "@/components/planner/CategoryChips.vue";
 import DurationChips from "@/components/planner/DurationChips.vue";
 import CategoryEditor from "./CategoryEditor.vue";
@@ -51,9 +57,12 @@ import { displayTitle, formatTaskTimeRange } from "@/lib/plannerFormat";
 import { canDeleteTask, editorModeFor, isOrgTask, orgAttribution, organizationLabel, orgMonogram } from "@/lib/taskAccess";
 import { useCurrentUserId } from "@/composables/useCurrentUser";
 import { OTHER_COLOR } from "@/lib/categoryPalette";
+import { readLastCategory, rememberCategory } from "@/lib/lastCategory";
+import { freeTimeNote } from "@/lib/newTaskDuration";
 import { isMutationSlow } from "@/services/slowRequests";
+import { useClipboardStore } from "@/stores/clipboardStore";
+import { useUIStore } from "@/stores/uiStore";
 
-const LAST_CATEGORY_KEY = "tp-last-category";
 const TEMPLATE_PREVIEW_COUNT = 6;
 
 const editor = useTaskEditor();
@@ -122,14 +131,6 @@ const templateRow = ref<HTMLElement | null>(null);
 // otherwise move the task by an hour).
 let prefilledStart: UtcIsoString = "";
 let prefilledFields = { date: "", time: "" };
-
-function readLastCategory(): string | null {
-  try {
-    return localStorage.getItem(LAST_CATEGORY_KEY);
-  } catch {
-    return null;
-  }
-}
 
 function defaultCategoryId(): string {
   const last = readLastCategory();
@@ -293,14 +294,6 @@ async function applyTemplate(template: TaskTemplate): Promise<void> {
 }
 
 // ------------------------------------------------------------------ save / delete
-function rememberCategory(id: string): void {
-  try {
-    localStorage.setItem(LAST_CATEGORY_KEY, id);
-  } catch {
-    /* ignore */
-  }
-}
-
 function finish(task: Task): void {
   rememberCategory(task.categoryId);
   editor.markSaved(task.id);
@@ -365,6 +358,49 @@ function remove(): void {
   void deleteTask(current.id);
 }
 
+// ------------------------------------------------------------------ copy / duplicate
+const clipboard = useClipboardStore();
+const uiStore = useUIStore();
+
+/** New task: "Only 10 min free before “Standup”." when not even 15 minutes fit before the next task. */
+const durationNote = computed(() =>
+  mode.value === "create" && startInstant.value ? freeTimeNote(editor.suggestDurationAt(startInstant.value)) : ""
+);
+
+function copyTask(): void {
+  const current = task.value;
+  if (!current) return;
+  editor.close();
+  clipboard.copy(current, { arm: true });
+  // The planner shows a "Tap a time to paste" banner; elsewhere, say where to go.
+  if (!editor.isPlannerShown()) {
+    uiStore.showToast(
+      `Copied “${displayTitle(current.title)}”. ${isCoarse.value ? "Tap" : "Click"} a time in the planner to paste it.`,
+      "info",
+      5000
+    );
+  }
+}
+
+function duplicateTask(days: number): void {
+  const current = task.value;
+  if (!current) return;
+  editor.close();
+  void clipboard.duplicate(current, days);
+}
+
+const moreItems = computed<MenuItem[]>(() => [
+  {
+    id: "copy",
+    label: "Copy",
+    icon: Copy,
+    description: isReadOnly.value ? "As a personal task" : undefined,
+    onSelect: copyTask,
+  },
+  { id: "duplicate-day", label: "Duplicate to next day", icon: CalendarPlus, onSelect: () => duplicateTask(1) },
+  { id: "duplicate-week", label: "Duplicate to next week", icon: CalendarPlus2, onSelect: () => duplicateTask(7) },
+]);
+
 // Read-only view (Q1): what, when, who.
 const readOnlyWhen = computed(() => {
   const t = task.value;
@@ -415,9 +451,18 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
     <div v-if="isReadOnly && task" class="editor editor--readonly">
       <div class="editor__head">
         <p class="editor__kind" aria-hidden="true">{{ dialogTitle }}</p>
-        <UiIconButton label="Close" size="sm" :tooltip="false" @click="open = false">
-          <X :size="16" />
-        </UiIconButton>
+        <div class="editor__head-actions">
+          <UiMenu :items="moreItems" placement="bottom-end">
+            <template #trigger="{ toggle, triggerProps }">
+              <UiIconButton label="More actions" size="sm" :tooltip="false" v-bind="triggerProps" @click="toggle">
+                <Ellipsis :size="16" />
+              </UiIconButton>
+            </template>
+          </UiMenu>
+          <UiIconButton label="Close" size="sm" :tooltip="false" @click="open = false">
+            <X :size="16" />
+          </UiIconButton>
+        </div>
       </div>
       <div class="ro__heading">
         <span class="org-badge" aria-hidden="true">{{ orgMonogram(orgName) }}</span>
@@ -455,9 +500,18 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
     <form v-else id="task-editor-form" class="editor" novalidate @submit.prevent="save">
       <div class="editor__head">
         <p class="editor__kind" aria-hidden="true">{{ dialogTitle }}</p>
-        <UiIconButton label="Close" size="sm" :tooltip="false" @click="open = false">
-          <X :size="16" />
-        </UiIconButton>
+        <div class="editor__head-actions">
+          <UiMenu v-if="isEditing" :items="moreItems" placement="bottom-end">
+            <template #trigger="{ toggle, triggerProps }">
+              <UiIconButton label="More actions" size="sm" :tooltip="false" v-bind="triggerProps" @click="toggle">
+                <Ellipsis :size="16" />
+              </UiIconButton>
+            </template>
+          </UiMenu>
+          <UiIconButton label="Close" size="sm" :tooltip="false" @click="open = false">
+            <X :size="16" />
+          </UiIconButton>
+        </div>
       </div>
       <div v-if="orgLine" class="editor__org">
         <span class="org-badge" aria-hidden="true">{{ orgMonogram(orgName) }}</span>
@@ -558,6 +612,7 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
       <div class="editor__section">
         <DurationChips v-model="durationMin" />
         <p class="editor__muted tabular" aria-live="polite">Duration {{ durationText }}</p>
+        <p v-if="durationNote" class="editor__note" role="note">{{ durationNote }}</p>
       </div>
 
       <div class="editor__section editor__categories">
@@ -705,6 +760,16 @@ const invalidStart = computed(() => !isDateKey(datePart.value) || !isTimeOfDay(t
   font-size: var(--fs-12);
   line-height: var(--lh-12);
   color: var(--text-secondary);
+}
+.editor__head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.editor__note {
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--warning-text);
 }
 .editor__kind {
   font-size: var(--fs-13);

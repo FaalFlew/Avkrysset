@@ -5,8 +5,11 @@
 //
 // Shortcuts are ignored while typing (input/textarea/select/contenteditable), during IME
 // composition, while any overlay is open (dialogs handle their own keys), and when Ctrl/Meta/Alt
-// is held — except AltGr, which Nordic layouts need for "[" and "?". Ctrl/⌘+Z (undo the last
-// delete while its toast is visible) is the only modifier shortcut.
+// is held — except AltGr, which Nordic layouts need for "[" and "?". Modifier shortcuts:
+// Ctrl/⌘+Z (undo the last delete while its toast is visible) and scoped "Mod+<key>" entries
+// (the planner's Ctrl/⌘+C / Ctrl/⌘+V). A "Mod+" handler that returns false leaves the key to the
+// browser; Ctrl/⌘+C never reaches one while text is selected (copying the selection wins), and
+// held-down repeats are ignored.
 
 import { onBeforeUnmount, onMounted } from "vue";
 import { hasOpenOverlay } from "@/components/ui/dialogStack";
@@ -57,6 +60,22 @@ function normalizeKey(event: KeyboardEvent): string {
   return event.key.length === 1 ? event.key.toLowerCase() : event.key;
 }
 
+/** Some page text is selected (Ctrl/⌘+C must copy it, not a task). */
+function hasTextSelection(): boolean {
+  const selection = typeof document !== "undefined" ? document.getSelection?.() : null;
+  return !!selection && !selection.isCollapsed && selection.toString().trim().length > 0;
+}
+
+/** Run the most recent scope's handler for `key`, then the global one. True when handled. */
+function dispatch(key: string, event: KeyboardEvent): boolean {
+  for (let i = scopes.length - 1; i >= 0; i -= 1) {
+    const handler = scopes[i]![key];
+    if (handler && handler(event) !== false) return true;
+  }
+  const handler = globalMap[key];
+  return !!handler && handler(event) !== false;
+}
+
 function onKeydown(event: KeyboardEvent): void {
   if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
   if (isTypingTarget(event.target)) return;
@@ -71,23 +90,24 @@ function onKeydown(event: KeyboardEvent): void {
   }
 
   const altGraph = event.getModifierState?.("AltGraph") ?? false;
+  if (isModKey(event) && !event.altKey && !altGraph) {
+    // Non-Latin layouts (e.g. Cyrillic) report the layout's letter: use the physical key then,
+    // like the browser's own Ctrl+C does.
+    const letter = /^[a-z]$/.test(key) || !/^Key[A-Z]$/.test(event.code ?? "") ? key : event.code.slice(3).toLowerCase();
+    if (event.repeat || (letter === "c" && hasTextSelection())) return;
+    if (dispatch(`Mod+${event.shiftKey ? "Shift+" : ""}${letter}`, event)) event.preventDefault();
+    return;
+  }
   if ((event.ctrlKey || event.metaKey || event.altKey) && !altGraph) return;
   if (event.repeat && NO_REPEAT.has(key)) return;
 
-  for (let i = scopes.length - 1; i >= 0; i -= 1) {
-    const handler = scopes[i]![key];
-    if (handler && handler(event) !== false) {
-      event.preventDefault();
-      return;
-    }
-  }
-  const handler = globalMap[key];
-  if (handler && handler(event) !== false) event.preventDefault();
+  if (dispatch(key, event)) event.preventDefault();
 }
 
 /**
- * Install the global listener (App.vue). `keys` maps normalized keys ("n", "?", "[", "1") to
- * handlers; `onUndo` runs for Ctrl/⌘+Z and returns whether something was undone.
+ * Install the global listener (App.vue). `keys` maps normalized keys ("n", "?", "[", "1", or
+ * "Mod+v" for Ctrl/⌘+V) to handlers; `onUndo` runs for Ctrl/⌘+Z and returns whether something
+ * was undone.
  * Returns an uninstall function.
  */
 export function installHotkeys(keys: HotkeyMap, onUndo?: () => boolean): () => void {

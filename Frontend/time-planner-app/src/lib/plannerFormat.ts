@@ -123,10 +123,12 @@ export function formatTaskLabel(
   return parts.join(", ");
 }
 
-/** Live-region text after a move/resize: "Moved Deep work to Tuesday, 09:15 – 10:45." */
+/**
+ * Live-region text after a move/resize/paste/duplicate: "Moved Deep work to Tuesday, 09:15 – 10:45."
+ */
 export function formatMoveAnnouncement(
   task: { title: string; start: UtcIsoString; duration: number },
-  verb: "Moved" | "Resized" = "Moved"
+  verb: "Moved" | "Resized" | "Pasted" | "Duplicated" = "Moved"
 ): string {
   const day = formatWeekdayLong(toDateKey(task.start));
   return `${verb} ${displayTitle(task.title, "task")} to ${day}, ${formatTaskTimeRange(task.start, task.duration)}.`;
